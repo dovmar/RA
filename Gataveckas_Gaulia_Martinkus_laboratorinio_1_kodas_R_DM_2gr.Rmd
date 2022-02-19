@@ -1,0 +1,184 @@
+---
+title: "Logistinė regresija"
+author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
+output:
+   word_document: default
+---
+
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+
+y <- read_csv("diabetes.csv")
+
+
+table(y$Outcome)
+```
+
+
+
+```{r}
+# Empirinės tikimybės
+
+y_plot <- y %>% pivot_longer(1:8)
+
+
+y_plot %>% ggplot(aes(value, Outcome)) +
+  stat_summary(fun = mean, geom = "bar") +
+  facet_wrap(vars(name), scales = "free") +
+  scale_x_binned(n.breaks = 8) +
+  theme_minimal()
+```
+
+
+```{r}
+# stačiakampės diagramos
+y <- y %>% mutate(Outcome = factor(Outcome))
+y_plot <- y_plot %>% mutate(Outcome = factor(Outcome))
+
+y_plot %>% ggplot(aes(Outcome, value, fill = Outcome)) +
+  geom_boxplot() +
+  facet_wrap(vars(name), scales = "free") +
+  theme_minimal()
+```
+
+
+```{r}
+library(caret)
+library(yardstick)
+
+model <- glm(
+  formula = Outcome ~ ., family = binomial(logit),
+  data = y
+)
+
+1 - pchisq(model$deviance, model$df.residual) # goodness-of-fit testas
+
+
+model <- glm(
+  formula = Outcome ~ ., family = binomial(logit),
+  data = y
+)
+
+confusionMatrix(factor(as.numeric(model$fitted.values > 0.5)), factor(y$Outcome))
+
+
+y_2 <- y %>% mutate(pred = model$fitted.values)
+roc_auc(y_2, Outcome, pred, event_level = "second")
+```
+
+
+
+```{r}
+# kovariančių atranka
+model_2 <- glm(
+  formula = Outcome ~ Pregnancies + Glucose + BloodPressure + BMI + DiabetesPedigreeFunction, family = binomial(logit),
+  data = y
+)
+
+anova(model, model_2, test = "Chisq") # modelis statistiškai reikšmingai nesiskiria nuo modelio su visomis kovariantėmis
+
+model$aic
+model_2$aic
+
+exp(coef(model_2))
+exp(confint(model_2))
+
+
+confusionMatrix(factor(as.numeric(model_2$fitted.values > 0.5)), factor(y$Outcome))
+```
+
+
+
+```{r}
+# Modelio kovariačių efektai
+library(effects)
+plot(predictorEffects(model_2))
+```
+
+
+
+```{r}
+library(cutpointr)
+
+y_2 <- y %>% mutate(pred = model_2$fitted.values)
+
+cp <- cutpointr(y_2, pred, Outcome,
+  pos_class = "1", direction = ">=",
+  method = maximize_metric, metric = youden
+)
+
+
+cp$roc_curve[[1]] %>%
+  ggplot(aes(x = 1 - tnr, y = tpr)) +
+  geom_path() +
+  coord_equal() +
+  geom_abline() +
+  theme_bw() +
+  xlab("Specificity") +
+  ylab("Sensitivity")
+
+
+roc_auc(y_2, Outcome, pred, event_level = "second")
+```
+
+
+
+```{r}
+# TN skaičius nėra svarbus uždaviniui
+# be to, 0 skaičius šiek tiek didesnis už 1
+# todėl naudojama PR kreivė
+
+cutoff <- cp$roc_curve[[1]] %>%
+  filter(tpr > 0.9) %>%
+  pull(m) %>%
+  max()
+
+labels <- filter(cp$roc_curve[[1]], (m %in% c(max(m), cutoff))) %>% round(2)
+
+
+cp$roc_curve[[1]] %>%
+  ggplot(aes(x = tpr, y = tp / (fp + tp))) +
+  geom_point(data = labels) +
+  geom_text(data = labels, aes(label = x.sorted), nudge_y = 0.05) +
+  geom_path() +
+  coord_equal() +
+  theme_bw() +
+  xlab("Recall") +
+  ylab("Precision")
+# optimalios slenkstinės reikšmės pagal Youden ir pasirinkus ribą Sensitivity > 0.9
+```
+
+
+
+```{r}
+# Palyginimas su probit modeliu
+model_3 <- glm(
+  formula = Outcome ~ Pregnancies + Glucose + BloodPressure + BMI + DiabetesPedigreeFunction, family = binomial(probit),
+  data = y
+)
+
+
+y_3 <- y %>% mutate(pred = model_3$fitted.values)
+
+
+cp_2 <- cutpointr(y_3, pred, Outcome,
+  method = maximize_metric, metric = F1_score
+)
+
+
+cp$roc_curve[[1]] %>%
+  mutate(link = "logit") %>%
+  rbind((cp_2$roc_curve[[1]] %>% mutate(link = "probit"))) %>%
+  ggplot(aes(x = tpr, y = tp / (fp + tp), color = link)) +
+  geom_path() +
+  coord_equal() +
+  theme_bw() +
+  xlab("Specificity") +
+  ylab("Sensitivity")
+# Skirtumų tarp modelių beveik nėra
+```
