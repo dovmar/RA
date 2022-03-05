@@ -1,27 +1,17 @@
----
-title: "Logistinė regresija"
-author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
-output:
-   word_document: default
----
-
-
-```{r, include=FALSE}
+## ---- include=FALSE-----------------------------------------------------------------------------------------------------------
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
-```
 
-```{r}
+
+## -----------------------------------------------------------------------------------------------------------------------------
 library(tidyverse)
 
 y <- read_csv("diabetes.csv")
 
 
 table(y$Outcome)
-```
 
 
-
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # empirinės tikimybės
 
 y_plot <- y %>% pivot_longer(1:8)
@@ -32,10 +22,9 @@ y_plot %>% ggplot(aes(value, Outcome)) +
   facet_wrap(vars(name), scales = "free") +
   scale_x_binned(n.breaks = 8) +
   theme_minimal()
-```
 
 
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # stačiakampės diagramos
 y <- y %>% mutate(Outcome = factor(Outcome))
 y_plot <- y_plot %>% mutate(Outcome = factor(Outcome))
@@ -44,10 +33,9 @@ y_plot %>% ggplot(aes(Outcome, value, fill = Outcome)) +
   geom_boxplot() +
   facet_wrap(vars(name), scales = "free") +
   theme_minimal()
-```
 
 
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 library(caret)
 library(yardstick)
 
@@ -73,9 +61,9 @@ confusionMatrix(factor(as.numeric(model$fitted.values > 0.5)), factor(y$Outcome)
 # plotas po ROC
 y_2 <- y %>% mutate(pred = model$fitted.values)
 roc_auc(y_2, Outcome, pred, event_level = "second")
-```
 
-```{r}
+
+## -----------------------------------------------------------------------------------------------------------------------------
 # multikolinearumo tikrinimas
 signs <- (model$coefficients > 0)[-1]
 name <- names(model$coefficients)[-1]
@@ -96,12 +84,9 @@ model <- glm(
   formula = Outcome ~ Pregnancies + Glucose + SkinThickness + BMI + DiabetesPedigreeFunction + Age, family = binomial(logit),
   data = y
 )
-```
 
 
-
-
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # reikšminų kovariančių atranka
 model_2 <- step(model,direction = "both")
 
@@ -117,20 +102,15 @@ confusionMatrix(factor(as.numeric(model_2$fitted.values > 0.5)), factor(y$Outcom
 # koeficientų interpretacija
 exp(coef(model_2))
 exp(confint(model_2))
-```
 
 
-
-
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # modelio kovariačių efektai
 library(effects)
 plot(predictorEffects(model_2))
-```
 
 
-
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # ROC kreivė
 library(cutpointr)
 
@@ -153,11 +133,9 @@ cp$roc_curve[[1]] %>%
 
 
 roc_auc(y_2, Outcome, pred, event_level = "second")
-```
 
 
-
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # dėl didelio TN skaičiaus ROC rezultatai gali būti per daug optimistiški, todėl papildomai naudojama PR kreivė
 cutoff <- cp$roc_curve[[1]] %>%
   filter(tpr > 0.9) %>%
@@ -180,11 +158,9 @@ cp$roc_curve[[1]] %>%
 # slenkstinių reikšmių parinkimas
 # suskaičiuojamos optimalios slenkstinės reikšmės pagal Youden-J statistic ir pasirinkus ribą Sensitivity > 0.9
   # (t.y. siekiant aptikti bent 90% sergančiųjų)
-```
 
 
-
-```{r}
+## -----------------------------------------------------------------------------------------------------------------------------
 # palyginimas su probit modeliu
 model_3 <- glm(
   formula = Outcome ~ Pregnancies + Glucose + BMI + DiabetesPedigreeFunction, family = binomial(probit),
@@ -210,4 +186,4 @@ cp$roc_curve[[1]] %>%
   xlab("Specificity") +
   ylab("Sensitivity")
 # skirtumų tarp modelių beveik nėra
-```
+
