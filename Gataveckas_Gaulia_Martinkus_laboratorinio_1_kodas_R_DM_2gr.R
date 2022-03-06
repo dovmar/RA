@@ -128,7 +128,7 @@ cp$roc_curve[[1]] %>%
   coord_equal() +
   geom_abline() +
   theme_bw() +
-  xlab("Specificity") +
+  xlab("1-Specificity") +
   ylab("Sensitivity")
 
 
