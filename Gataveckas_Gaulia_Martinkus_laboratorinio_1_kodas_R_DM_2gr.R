@@ -6,7 +6,7 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 library(tidyverse)
 
 y <- read_csv("diabetes.csv")
-
+y <- y %>% filter(BloodPressure != 0,BMI != 0)
 
 table(y$Outcome)
 
@@ -43,6 +43,8 @@ model <- glm(
   formula = Outcome ~ ., family = binomial(logit),
   data = y
 )
+
+summary(model)
 
 1-pchisq(model$null.deviance-model$deviance, model$df.null-model$df.residual) # globali nulinė hipotezė (tikėtinumo santykių testas likelihood ratio test)
 
@@ -88,7 +90,7 @@ model <- glm(
 
 ## -----------------------------------------------------------------------------------------------------------------------------
 # reikšminų kovariančių atranka
-model_2 <- step(model,direction = "both")
+model_2 <- MASS::stepAIC(model,direction = "both")
 
 anova(model, model_2, test = "Chisq") # modelis statistiškai reikšmingai nesiskiria nuo modelio su visomis kovariantėmis
 
@@ -138,7 +140,7 @@ roc_auc(y_2, Outcome, pred, event_level = "second")
 ## -----------------------------------------------------------------------------------------------------------------------------
 # dėl didelio TN skaičiaus ROC rezultatai gali būti per daug optimistiški, todėl papildomai naudojama PR kreivė
 cutoff <- cp$roc_curve[[1]] %>%
-  filter(tpr > 0.9) %>%
+  filter(tpr >= 0.9) %>%
   pull(m) %>%
   max()
 
@@ -161,9 +163,14 @@ cp$roc_curve[[1]] %>%
 
 
 ## -----------------------------------------------------------------------------------------------------------------------------
+# klasifikavimo lentelė su pasirinkta nauja slenkstine reikšme
+confusionMatrix(factor(as.numeric(model_2$fitted.values >= 0.21)), factor(y$Outcome),positive="1")
+
+
+## -----------------------------------------------------------------------------------------------------------------------------
 # palyginimas su probit modeliu
 model_3 <- glm(
-  formula = Outcome ~ Pregnancies + Glucose + BMI + DiabetesPedigreeFunction, family = binomial(probit),
+  formula = Outcome ~ Pregnancies + Glucose + BMI + DiabetesPedigreeFunction + Age, family = binomial(probit),
   data = y
 )
 

@@ -1,4 +1,4 @@
-PROC IMPORT DATAFILE='/home/u45871880/diabetes.csv'
+PROC IMPORT DATAFILE='/home/u45871880/diabetes_cleaned.csv'
 	DBMS=CSV
 	OUT=data;
 	GETNAMES=YES;
