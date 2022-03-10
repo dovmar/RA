@@ -1,8 +1,8 @@
-## ---- include=FALSE-----------------------------------------------------------------------------------------------------------
+## ---- include=FALSE-----------------------------------------------------------------------------------------------
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 library(tidyverse)
 
 y <- read_csv("diabetes.csv")
@@ -11,7 +11,7 @@ y <- y %>% filter(BloodPressure != 0,BMI != 0)
 table(y$Outcome)
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # empirinės tikimybės
 
 y_plot <- y %>% pivot_longer(1:8)
@@ -24,7 +24,7 @@ y_plot %>% ggplot(aes(value, Outcome)) +
   theme_minimal()
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # stačiakampės diagramos
 y <- y %>% mutate(Outcome = factor(Outcome))
 y_plot <- y_plot %>% mutate(Outcome = factor(Outcome))
@@ -35,7 +35,7 @@ y_plot %>% ggplot(aes(Outcome, value, fill = Outcome)) +
   theme_minimal()
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 library(caret)
 library(yardstick)
 
@@ -65,30 +65,7 @@ y_2 <- y %>% mutate(pred = model$fitted.values)
 roc_auc(y_2, Outcome, pred, event_level = "second")
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
-# multikolinearumo tikrinimas
-signs <- (model$coefficients > 0)[-1]
-name <- names(model$coefficients)[-1]
-
-temp_model <- function(x) {
-  x <- sym(x)
-  temp_model <- glm(
-    formula = Outcome ~ eval(x), family = binomial(logit),
-    data = y)
-  temp_model$coefficients[2] > 0
-}
-
-
-map(name,temp_model) == signs
-
-# pašalinamas kintamasis kurio koeficiento ženklas modelyje neatitinka jo įtakos
-model <- glm(
-  formula = Outcome ~ Pregnancies + Glucose + SkinThickness + BMI + DiabetesPedigreeFunction + Age, family = binomial(logit),
-  data = y
-)
-
-
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # reikšminų kovariančių atranka
 model_2 <- MASS::stepAIC(model,direction = "both")
 
@@ -106,13 +83,13 @@ exp(coef(model_2))
 exp(confint(model_2))
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # modelio kovariačių efektai
 library(effects)
 plot(predictorEffects(model_2))
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # ROC kreivė
 library(cutpointr)
 
@@ -137,7 +114,7 @@ cp$roc_curve[[1]] %>%
 roc_auc(y_2, Outcome, pred, event_level = "second")
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # dėl didelio TN skaičiaus ROC rezultatai gali būti per daug optimistiški, todėl papildomai naudojama PR kreivė
 cutoff <- cp$roc_curve[[1]] %>%
   filter(tpr >= 0.9) %>%
@@ -162,17 +139,23 @@ cp$roc_curve[[1]] %>%
   # (t.y. siekiant aptikti bent 90% sergančiųjų)
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # klasifikavimo lentelė su pasirinkta nauja slenkstine reikšme
 confusionMatrix(factor(as.numeric(model_2$fitted.values >= 0.21)), factor(y$Outcome),positive="1")
 
 
-## -----------------------------------------------------------------------------------------------------------------------------
+## -----------------------------------------------------------------------------------------------------------------
 # palyginimas su probit modeliu
 model_3 <- glm(
-  formula = Outcome ~ Pregnancies + Glucose + BMI + DiabetesPedigreeFunction + Age, family = binomial(probit),
+  formula = Outcome ~ ., family = binomial(probit),
   data = y
 )
+
+
+model_3 <- MASS::stepAIC(model_3,direction = "both")
+
+names(model_3$coefficients) == names(model_2$coefficients) 
+# atrinktos tos pačios kovariantės
 
 
 y_3 <- y %>% mutate(pred = model_3$fitted.values)
@@ -190,7 +173,7 @@ cp$roc_curve[[1]] %>%
   geom_path() +
   coord_equal() +
   theme_bw() +
-  xlab("Specificity") +
-  ylab("Sensitivity")
+  xlab("Recall") +
+  ylab("Precision")
 # skirtumų tarp modelių beveik nėra
 

@@ -2,7 +2,7 @@
 title: "Logistinė regresija"
 author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
 output:
-   html_document: default
+   word_document: default
 ---
 
 
@@ -75,29 +75,6 @@ confusionMatrix(factor(as.numeric(model$fitted.values > 0.5)), factor(y$Outcome)
 # plotas po ROC
 y_2 <- y %>% mutate(pred = model$fitted.values)
 roc_auc(y_2, Outcome, pred, event_level = "second")
-```
-
-```{r}
-# multikolinearumo tikrinimas
-signs <- (model$coefficients > 0)[-1]
-name <- names(model$coefficients)[-1]
-
-temp_model <- function(x) {
-  x <- sym(x)
-  temp_model <- glm(
-    formula = Outcome ~ eval(x), family = binomial(logit),
-    data = y)
-  temp_model$coefficients[2] > 0
-}
-
-
-map(name,temp_model) == signs
-
-# pašalinamas kintamasis kurio koeficiento ženklas modelyje neatitinka jo įtakos
-model <- glm(
-  formula = Outcome ~ Pregnancies + Glucose + SkinThickness + BMI + DiabetesPedigreeFunction + Age, family = binomial(logit),
-  data = y
-)
 ```
 
 
@@ -194,9 +171,15 @@ confusionMatrix(factor(as.numeric(model_2$fitted.values >= 0.21)), factor(y$Outc
 ```{r}
 # palyginimas su probit modeliu
 model_3 <- glm(
-  formula = Outcome ~ Pregnancies + Glucose + BMI + DiabetesPedigreeFunction + Age, family = binomial(probit),
+  formula = Outcome ~ ., family = binomial(probit),
   data = y
 )
+
+
+model_3 <- MASS::stepAIC(model_3,direction = "both")
+
+names(model_3$coefficients) == names(model_2$coefficients) 
+# atrinktos tos pačios kovariantės
 
 
 y_3 <- y %>% mutate(pred = model_3$fitted.values)
@@ -214,7 +197,7 @@ cp$roc_curve[[1]] %>%
   geom_path() +
   coord_equal() +
   theme_bw() +
-  xlab("Specificity") +
-  ylab("Sensitivity")
+  xlab("Recall") +
+  ylab("Precision")
 # skirtumų tarp modelių beveik nėra
 ```
