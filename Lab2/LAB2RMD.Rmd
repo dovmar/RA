@@ -1,13 +1,13 @@
 ---
 title: "LAB2RMD"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r }
+```{r , message=FALSE}
 # Duomenys 
 # https://www.kaggle.com/datasets/brajeshmohapatra/bike-count-prediction-data-set?select=train.csv
 
@@ -16,12 +16,19 @@ library(ggplot2)
 library(reshape2)
 library(AER)
 library(MASS)
+```
 
+
+```{r }
 d <- read.csv("train.csv")
 d <- dplyr::select(d, -c(datetime, casual, registered))
 
 head(d)
 summary(d)
+```
+
+```{r}
+ggplot(d, aes(x=count)) + geom_histogram(bins = 100)
 ```
 
 ```{r}
@@ -102,7 +109,7 @@ head(test)
 
 ```
 
-```{r }
+```{r  fig.width = 12}
 plots <- list()  # new empty list
 for (i in 1:8) {
   p1 = dopred(data.frame(totest[i]))

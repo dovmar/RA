@@ -10,6 +10,7 @@ library(MASS)
 d <- read.csv("train.csv")
 d <- dplyr::select(d, -c(datetime, casual, registered))
 
+ggplot(d, aes(x=count)) + geom_histogram(bins = 100)
 
 head(d)
 summary(d)
