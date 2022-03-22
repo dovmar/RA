@@ -12,22 +12,37 @@ knitr::opts_chunk$set(echo = TRUE)
 # https://www.kaggle.com/datasets/brajeshmohapatra/bike-count-prediction-data-set?select=train.csv
 
 library(tidyverse)
-library(ggplot2)
 library(reshape2)
 library(AER)
 library(MASS)
+library(goft)
+library(lubridate)
 ```
 
 
 ```{r }
-d <- read.csv("train.csv")
-d <- dplyr::select(d, -c(datetime, casual, registered))
+tr <- read.csv("train.csv")
+te <- read.csv("test.csv")
+te$count <- te$casual + te$registered
+mega <- rbind(tr, te)
+mega$hour <- hour(mega$datetime)
+mega$day <- day(mega$datetime)
+mega$yday <- yday(mega$datetime)
+mega$wday <- wday(mega$datetime)
+mega <- dplyr::select(mega, -c(datetime, casual, registered))
+```
 
-head(d)
-summary(d)
+
+```{r}
+head(mega)
 ```
 
 ```{r}
+summary(mega)
+```
+
+```{r}
+d <- mega[0:floor(0.90 * nrow(mega)),]
 ggplot(d, aes(x=count)) + geom_histogram(bins = 100)
 ```
 
@@ -45,8 +60,6 @@ summary(m1)
 
 cat("Deviacija padalinta is laisves laipsniu: ",m1$deviance / m1$df.residual)
 cat("Turi buti tarp 0.7 ir 1.3, tad nebegalime naudoti puasono modelio")
-
-dispersiontest(m1)
 ```
 
 ```{r }
@@ -57,6 +70,27 @@ summary(m2)
 cat("Deviacija padalinta is laisves laipsniu: ",m2$deviance / m2$df.residual)
 ```
 
+## Cia reikia prielaidu
+```{r }
+# p1
+# p2
+# p3
+# p4
+```
+
+
+```{r }
+# # # NEVEIKIA NES LIBRARY SUGADINTAS # # #
+### Zero deflated
+#require(foreign)
+#require(ggplot2)
+#require(VGAM)
+#require(boot)
+#ztrunc <- vglm(count ~ ., family = posnegbinomial(), data = d)
+#summary(ztrunc)
+```
+
+
 ```{r }
 ### Stepwise
 m2step <- stepAIC(m2, direction = "both")
@@ -64,10 +98,6 @@ summary(m2step)
 cat("Deviacija padalinta is laisves laipsniu: ",m2step$deviance / m2step$df.residual)
 ```
 
-```{r }
-# Anova between models 
-anova(m2, m2step)
-```
 
 ```{r }
 # Koeficientai
@@ -77,51 +107,44 @@ exp(est)
 ```
 
 ```{r }
-library(ggplot2)
-theme_set(theme_minimal())
-### Prediction
-
 dopred <- function(tt, model) { 
-  tt$count <- tt$casual + tt$registered
-  index <- tt$index
+  # Index
+  index <- 1:nrow(tt)
+  # Ground truth
   real <- tt$count
-  tt <- dplyr::select(tt, -c(datetime, casual, registered, count))
-  predicted <- predict(m2step, newdata = tt, type = "response")
-  tempdf <- data.frame(index, real, predicted)
+  # Predicted
+  tt <- dplyr::select(tt, -count)
+  predicted <- predict(model, newdata = tt, type = "response")
+  # df
+  tempdf <- data.frame(real, predicted, index)
   
-  p<- ggplot(tempdf, aes(x=index)) + 
-    geom_line(aes(y = real), color = "#0F9D58") + 
-    geom_line(aes(y = predicted), color="#4285F4", linetype="twodash") 
+  print(mean(abs((tempdf$real-tempdf$predicted)/tempdf$real)) * 100)
+  p <- ggplot(tempdf, aes(x=index)) + 
+      geom_line(aes(y = real), color = "#0F9D58") + 
+      geom_line(aes(y = predicted), color="#4285F4", linetype="twodash") 
   return(p)
 }
+```
 
 
-test <- read.csv("test.csv")
-test$index <- 1:nrow(test)
 
-num_groups = 8
+```{r }
+v <- mega[floor(0.90 * nrow(mega)):nrow(mega),]
 
-totest <- test %>% 
+# Split to 4 datasets
+num_groups = 4
+totest <- v %>% 
   group_by((row_number()-1) %/% (n()/num_groups)) %>%
   nest %>% pull(data)
 
-head(test)
-
-```
-
-```{r  fig.width = 12}
-plots <- list()  # new empty list
-for (i in 1:8) {
-  p1 = dopred(data.frame(totest[i]))
-  plots[[i]] <- p1  # add each plot into plot list
+# Prediction for each dataset
+plots <- list()
+for (i in 1:num_groups) {
+  plots[[i]] = dopred( data.frame(totest[i]), m2step)
 }
 plots
+
 ```
-
-
-
-
-
 
 
 

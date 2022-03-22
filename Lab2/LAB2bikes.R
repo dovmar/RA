@@ -2,18 +2,25 @@
 # https://www.kaggle.com/datasets/brajeshmohapatra/bike-count-prediction-data-set?select=train.csv
 
 library(tidyverse)
-library(ggplot2)
 library(reshape2)
 library(AER)
 library(MASS)
+library(goft)
+library(lubridate)
 
-d <- read.csv("train.csv")
-d <- dplyr::select(d, -c(datetime, casual, registered))
+tr <- read.csv("train.csv")
+te <- read.csv("test.csv")
+te$count <- te$casual + te$registered
+mega <- rbind(tr, te)
+mega$hour <- hour(mega$datetime)
+mega$day <- day(mega$datetime)
+mega$yday <- yday(mega$datetime)
+mega$wday <- wday(mega$datetime)
+mega <- dplyr::select(mega, -c(datetime, casual, registered))
+
+d <- mega[0:floor(0.90 * nrow(mega)),]
 
 ggplot(d, aes(x=count)) + geom_histogram(bins = 100)
-
-head(d)
-summary(d)
 
 ggplot(melt(d, "count"), aes(x = value, y = count, colour = variable)) + 
   geom_point() + 
@@ -26,13 +33,17 @@ summary(m1)
 cat("Deviacija padalinta is laisves laipsniu: ",m1$deviance / m1$df.residual)
 cat("Turi buti tarp 0.7 ir 1.3, tad nebegalime naudoti puasono modelio")
 
-dispersiontest(m1)
-
 ### Negative Binomial
 m2 <- glm.nb(count ~ ., data = d)
 summary(m2)
 
 cat("Deviacija padalinta is laisves laipsniu: ",m2$deviance / m2$df.residual)
+
+
+### Zero deflated - NEVEIKIA NES R GAIDYS
+#library(VGAM)
+#ztrunc <- vglm(count ~ ., family = posnegbinomial(), data = d)
+#summary(ztrunc)
 
 ### Stepwise
 m2step <- stepAIC(m2, direction = "both")
@@ -48,48 +59,36 @@ exp(est)
 
 
 ### Prediction
+v <- mega[floor(0.90 * nrow(mega)):nrow(mega),]
+
 
 dopred <- function(tt, model) { 
-  tt$count <- tt$casual + tt$registered
-  index <- tt$index
+  # Index
+  index <- 1:nrow(tt)
+  # Ground truth
   real <- tt$count
-  tt <- dplyr::select(tt, -c(datetime, casual, registered, count))
-  predicted <- predict(m2step, newdata = tt, type = "response")
-  tempdf <- data.frame(index, real, predicted)
+  # Predicted
+  tt <- dplyr::select(tt, -count)
+  predicted <- predict(model, newdata = tt, type = "response")
+  # df
+  tempdf <- data.frame(real, predicted, index)
   
-  p<- ggplot(tempdf, aes(x=index)) + 
-    geom_line(aes(y = real), color = "#0F9D58") + 
-    geom_line(aes(y = predicted), color="#4285F4", linetype="twodash") 
+  print(mean(abs((tempdf$real-tempdf$predicted)/tempdf$real)) * 100)
+  p <- ggplot(tempdf, aes(x=index)) + 
+      geom_line(aes(y = real), color = "#0F9D58") + 
+      geom_line(aes(y = predicted), color="#4285F4", linetype="twodash") 
   return(p)
 }
 
+num_groups = 4
 
-test <- read.csv("test.csv")
-test$index <- 1:nrow(test)
-head(test)
-
-num_groups = 8
-
-totest <- test %>% 
+totest <- v %>% 
   group_by((row_number()-1) %/% (n()/num_groups)) %>%
   nest %>% pull(data)
 
-
-library(ggplot2)
-library(multiplot)
-install.packages("multiplot")
-theme_set(theme_minimal())
-
-plots <- list()  # new empty list
-for (i in 1:8) {
-  p1 = dopred(data.frame(totest[i]))
-  plots[[i]] <- p1  # add each plot into plot list
+plots <- list()
+for (i in 1:num_groups) {
+  plots[[i]] = dopred( data.frame(totest[i]), m2step)
 }
 plots
 
-
-
-
-
-
-p
