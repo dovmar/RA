@@ -1,0 +1,229 @@
+---
+title: "Regresija įvykių skaičiui"
+author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
+output:
+   html_document: default
+   word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r, message=FALSE}
+# Duomenys
+# https://www.kaggle.com/datasets/brajeshmohapatra/bike-count-prediction-data-set?select=train.csv
+
+library(tidyverse)
+library(AER)
+library(MASS)
+```
+
+
+```{r}
+tr <- read.csv("train.csv")
+te <- read.csv("test.csv")
+te$count <- te$casual + te$registered
+full <- rbind(tr, te)
+full <- full %>%
+  dplyr::select(-c(datetime, casual, registered)) %>%
+  mutate(
+    season = factor(season),
+    holiday = factor(holiday),
+    workingday = factor(workingday),
+    weather = factor(weather)
+  )
+```
+
+
+```{r}
+head(full)
+```
+
+
+
+```{r}
+# Perdaromi mokymo ir testavimo duomenų rinkiniai
+library(rsample)
+full_split <- initial_split(full, prop = 0.9)
+train <- training(full_split)
+test <- testing(full_split)
+
+
+ggplot(train, aes(x = count)) +
+  geom_histogram() +
+  theme_minimal()
+
+
+# Dispersija didesnė už vidurkį
+mean(train$count)
+var(train$count)
+
+
+train %>%
+  mutate(q = ntile(count, 6)) %>%
+  group_by(q) %>%
+  summarize(mean = mean(count), var = var(count))
+```
+
+
+```{r}
+train %>%
+  mutate(count = log(count)) %>%
+  dplyr::select(c(temp, atemp, windspeed, humidity, count)) %>%
+  pivot_longer(-count) %>%
+  ggplot(aes(x = value, y = count, colour = name)) +
+  geom_point() +
+  geom_smooth(se = F, color = "red") +
+  facet_wrap(~name, scales = "free") +
+  theme_minimal()
+```
+
+
+```{r}
+# Tarpusavio koreliacijos
+library(corrplot)
+
+correlation_matrix <- train %>%
+  dplyr::select(where(is.numeric)) %>%
+  cor()
+
+corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black")
+
+train <- train %>% dplyr::select(-c(temp))
+```
+
+```{r}
+name <- full %>%
+  dplyr::select(where(is.factor)) %>%
+  names()
+
+group <- function(x) {
+  full %>%
+    group_by(!!sym(x)) %>%
+    summarize(mean = mean(count), var = var(count), n = n())
+}
+
+purrr::map(name, group)
+```
+
+
+```{r}
+train %>%
+  mutate(count = log(count)) %>%
+  dplyr::select(c(season, holiday, workingday, weather, count)) %>%
+  pivot_longer(-count) %>%
+  ggplot(aes(x = value, y = count, group = value)) +
+  geom_boxplot() +
+  facet_wrap(~name, scales = "free") +
+  theme_minimal()
+```
+
+
+
+```{r}
+# Puasono modelis
+model_1 <- glm(count ~ ., family = "poisson", data = train)
+summary(model_1)
+
+cat("Deviacija padalinta iš laisvės laipsnių: ", model_1$deviance / model_1$df.residual, "\n")
+cat("Siekiama, kad būtų tarp 0.7 ir 1.3")
+
+# Tikrinima hipotezė, kad modelis nėra per didelės dispersijos
+dispersiontest(model_1, trafo = 2)
+```
+
+```{r}
+# Neigiamas binominis modelis
+model_2 <- glm.nb(count - 1 ~ ., data = train)
+summary(model_2)
+
+cat("Deviacija padalinta iš laisvės laipsnių: ", model_2$deviance / model_2$df.residual, "\n")
+```
+
+
+```{r}
+plot(cooks.distance(model_2))
+tibble(fitted = model_2$fitted.values, resid = resid(model_2, "pearson")) %>%
+  ggplot(aes(fitted, resid)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = F)
+```
+
+
+
+```{r}
+# Stepwise selection
+model_2_step <- stepAIC(model_2)
+
+# Gaunamas lygiai toks pat modelis
+anova(model_2, model_2_step)
+```
+
+
+```{r }
+# Modelio koeficientų reikšmės
+est <- cbind(Estimate = exp(coef(model_2)), exp(confint(model_2)))
+est
+```
+
+
+```{r}
+library(effects)
+plot(predictorEffects(model_2))
+```
+
+
+```{r}
+# Modelio panaudojimas prognozėms naudojant testavimo duomenų aibę
+test_with_pred <- test %>% mutate(count = count, pred = predict(model_2_step, test, type = "response"))
+
+test_with_pred %>%
+  dplyr::select(c(count, pred)) %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(x = value, fill = name)) +
+  geom_histogram() +
+  theme_minimal() +
+  facet_wrap(vars(name))
+```
+
+
+```{r}
+library(yardstick)
+
+rmse(test_with_pred, count, pred)
+mae(test_with_pred, count, pred)
+```
+
+
+
+
+
+```{r}
+# Zero-truncated modelis kaip alternatyva
+library(VGAM)
+ztrunc <- vglm(count ~ ., family = posnegbinomial(), data = train)
+
+summary(ztrunc)
+```
+
+```{r}
+# Modelio prognozės
+test_with_pred <- test %>% mutate(pred = predict(ztrunc, test, type = "response")[, 1])
+
+test_with_pred %>%
+  dplyr::select(c(count, pred)) %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(x = value, fill = name)) +
+  geom_histogram() +
+  theme_minimal() +
+  facet_wrap(vars(name))
+```
+
+
+
+```{r}
+rmse(test_with_pred, count, pred)
+mae(test_with_pred, count, pred)
+```
