@@ -58,8 +58,8 @@ full_split <- initial_split(full, prop = 0.9)
 train <- training(full_split)
 test <- testing(full_split)
 
-write_csv(train,"train_from_R.csv")
-write_csv(test,"test_from_R.csv")
+#write_csv(train,"train_from_R.csv")
+#write_csv(test,"test_from_R.csv")
 ```
 
 
@@ -268,7 +268,7 @@ test_with_pred %>%
   dplyr::select(c(count, pred)) %>%
   pivot_longer(everything()) %>%
   ggplot(aes(x = value, fill = name)) +
-  geom_histogram(bins = 12) +
+  geom_histogram(bins=12) +
   theme_minimal() +
   facet_wrap(vars(name))
 ```
