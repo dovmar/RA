@@ -143,7 +143,6 @@ purrr::map(name, group)
 
 ```{r}
 train %>%
-  mutate(count = log(count)) %>%
   dplyr::select(c(season, holiday, workingday, weather, count)) %>%
   pivot_longer(-count) %>%
   ggplot(aes(x = value, y = count, group = value)) +
