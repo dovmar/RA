@@ -1,0 +1,138 @@
+---
+title: "Splainų Regresija"
+author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
+output:
+   html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r, message=FALSE}
+# Duomenys
+# https://www.kaggle.com/datasets/elikplim/concrete-compressive-strength-data-set
+
+library(tidyverse)
+
+library(rsample)
+
+concrete <- read_csv("concrete_data.csv")
+
+concrete <- concrete %>% rename(strength = concrete_compressive_strength)
+
+set.seed(123)
+concrete_split <- initial_split(concrete)
+concrete_train <- training(concrete_split)
+concrete_test <- testing(concrete_split)
+```
+
+
+```{r}
+library(corrplot)
+
+correlation_matrix <- concrete_train %>%
+  cor()
+
+corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black")
+
+```
+
+
+```{r}
+concrete_train %>% pivot_longer(-strength) %>% ggplot(aes(value,strength)) + geom_point() + facet_wrap(vars(name),scales="free")  + 
+  geom_smooth() + theme_minimal()
+```
+
+
+
+
+```{r}
+library(mgcv)
+model_linear <- lm(strength~ cement + blast_furnace_slag + fly_ash +
+             water + superplasticizer
+             + coarse_aggregate + fine_aggregate + age, data=concrete_train)
+```
+
+
+```{r}
+summary(model_linear)
+plot(model_linear)
+
+library(effects)
+plot(predictorEffects(model_linear))
+```
+
+
+
+```{r}
+model <- gam(strength~ cement + blast_furnace_slag + fly_ash
+             + s(water) + s(superplasticizer) 
+             + coarse_aggregate + fine_aggregate + age, data=concrete_train, method="REML")
+gam.check(model)
+summary(model)
+```
+
+```{r}
+model <- gam(strength~ cement + blast_furnace_slag + fly_ash
+             + s(water) + s(superplasticizer) + age, data=concrete_train, method="REML")
+summary(model)
+```
+
+
+
+```{r}
+anova(model_linear,model,test = "Chisq")
+
+AIC(model_linear)
+AIC(model)
+```
+
+
+
+
+
+```{r}
+model <- gam(strength~ s(cement) + s(blast_furnace_slag) + s(fly_ash)
+             + s(water) + s(superplasticizer) 
+             + coarse_aggregate + fine_aggregate + s(age), data=concrete_train, method="REML")
+
+AIC(model)
+
+```
+
+
+```{r}
+model <- gam(strength~ te(cement,blast_furnace_slag) + s(blast_furnace_slag) + s(fly_ash)
+             + s(water) + s(superplasticizer) 
+             + coarse_aggregate + fine_aggregate + s(age), data=concrete_train, method="REML")
+
+AIC(model)
+```
+
+```{r}
+# check for overfit
+library(yardstick)
+
+concrete_test <- concrete_test %>% 
+  mutate(predicted = predict(model_linear,concrete_test))
+
+rmse(concrete_test, strength, predicted)
+mae(concrete_test, strength, predicted)
+
+
+
+concrete_test <- concrete_test %>% 
+  mutate(predicted = predict(model,concrete_test))
+
+rmse(concrete_test, strength, predicted)
+mae(concrete_test, strength, predicted)
+```
+
+
+
+
+```{r}
+```
+
