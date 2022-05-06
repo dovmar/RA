@@ -2,7 +2,7 @@
 title: "Netiesinė regresija"
 author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
 output:
-   html_document: default
+   word_document: default
 ---
 
 
@@ -12,7 +12,8 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 
 ```{r, message=FALSE}
 # Duomenų šaltinis
-# https://www.kaggle.com/datasets/elikplim/concrete-compressive-strength-data-set
+# https://archive.ics.uci.edu/ml/datasets/concrete+compressive+strength
+# (https://www.kaggle.com/datasets/elikplim/concrete-compressive-strength-data-set)
 
 library(tidyverse)
 library(rsample)
@@ -56,42 +57,38 @@ concrete_train %>%
 
 
 ```{r}
-# Pirma sudaromas paprastos regresijos modelis
+# Pirma sudaromas regresijos modelis su vien tiesiniais
+  # kovariančių ir atsako sąryšiais (lyginamasis)
 library(car)
 
-model_linear <- lm(strength ~ cement + blast_furnace_slag + fly_ash +
+baseline <- lm(strength ~ cement + blast_furnace_slag + fly_ash +
   water + superplasticizer
   + coarse_aggregate + fine_aggregate + age, data = concrete_train)
 
 
-plot(model_linear)
-crPlots(model_linear)
+plot(baseline)
+crPlots(baseline)
 ```
 
 
 ```{r}
 # "naivus" metodas pagerinti modelį pridedant aukštesnius kovariančių laipsnius
-model_linear2 <- lm(strength ~ cement + +blast_furnace_slag
+model_polynomial <- lm(strength ~ cement + +blast_furnace_slag
   + fly_ash + water + I(water^2)
   + superplasticizer + I(superplasticizer^2)
   + coarse_aggregate + fine_aggregate + age + I(age^2),
 data = concrete_train
 )
 
-plot(model_linear2)
-summary(model_linear2)
-crPlots(model_linear2)
+plot(model_polynomial)
+summary(model_polynomial)
+crPlots(model_polynomial)
 ```
 
 
 ```{r}
 # modelis reikšmingai skiriasi nuo modelio be aukštesnio laipsnio narių
-library(MASS)
-anova(model_linear, model_linear2)
-
-# sudaromas galutinis modelis pažingsnine regresija išrinkus kovariantes
-model_linear_final <- stepAIC(model_linear2)
-summary(model_linear_final)
+anova(baseline, model_polynomial)
 ```
 
 
@@ -128,53 +125,51 @@ gam.check(model_gam2)
 summary(model_gam2)
 draw(model_gam2)
 
-# modelis statistiškai reik6mingai skiriasi nuo modelio su mažesniu mazgų skaičiumi
-anova(model_gam, model_gam2, test = "Chisq")
+# modelis statistiškai reikšmingai skiriasi nuo modelio su mažesniu mazgų skaičiumi
+anova(model_gam, model_gam2,test="F")
 ```
 
 
 
 
 
-```{r}
+```{r fig.width=15, fig.height=12}
 # modelio palyginimas su prieš tai sudarytu paprastos regresijos modeliu
 library(effects)
-AIC(model_linear_final)
+AIC(model_polynomial)
 AIC(model_gam2)
 
-plot(predictorEffects(model_linear_final))
-draw(model_gam2)
+plot(predictorEffects(model_polynomial))
+draw(model_gam2,)
 ```
 
 
 
-```{r}
+```{r fig.width=16, fig.height=10}
 # Nors naudoti glodnieji splainai, naudojant testavimo aibę patikrinama ar kažkur nebuvo padaryta klaidų ir
 # modelis tikrai nepersimokė
 library(yardstick)
 
 concrete_test <- concrete_test %>%
-  mutate(predicted_linear = predict(model_linear_final, concrete_test))
+  mutate(predicted_baseline = predict(baseline, concrete_test),
+         predicted_polynomial = predict(model_polynomial,concrete_test),
+         predicted_gam = predict(model_gam2,concrete_test))
 
-rmse(concrete_test, strength, predicted_linear)
-mae(concrete_test, strength, predicted_linear)
-
-
-
-concrete_test <- concrete_test %>%
-  mutate(predicted_gam = predict(model_gam2, concrete_test))
-
-rmse(concrete_test, strength, predicted_gam)
-mae(concrete_test, strength, predicted_gam)
+set <- metric_set(rmse,mae)
+set(concrete_test, strength, predicted_baseline)
+set(concrete_test, strength, predicted_polynomial)
+set(concrete_test, strength, predicted_gam)
 # tiek pagal MAE, tiek pagal RMSE naudojant gam modelį gaunami geresni rezultatai
 
-# Modelių palyginimas
+
+# Modelių prognozių palyginimas
 concrete_test %>%
-  pivot_longer(c(predicted_gam, predicted_linear)) %>%
+  pivot_longer(c(predicted_gam, predicted_polynomial,predicted_baseline)) %>%
+  mutate(name= factor(name,levels=c("predicted_baseline","predicted_polynomial","predicted_gam"))) %>%
   ggplot(aes(strength, value)) +
-  geom_point() +
+  geom_point(size=2) +
   facet_wrap(vars(name)) +
-  geom_abline(color = "red", size = 1.25) +
+  geom_abline(color = "red", size = 2.25) +
   labs(x = "Actual", y = "Predicted") +
-  theme_minimal()
+  theme_minimal(base_size = 25) 
 ```
