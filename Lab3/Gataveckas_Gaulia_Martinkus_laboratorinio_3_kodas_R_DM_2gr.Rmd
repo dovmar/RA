@@ -134,7 +134,7 @@ anova(model_gam, model_gam2,test="F")
 
 
 ```{r fig.width=15, fig.height=12}
-# modelio palyginimas su prieš tai sudarytu paprastos regresijos modeliu
+# modelio palyginimas su prieš tai sudarytu polinominės regresijos modeliu
 library(effects)
 AIC(model_polynomial)
 AIC(model_gam2)
