@@ -11,10 +11,6 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ```
 
 ```{r, message=FALSE}
-# Duomenų šaltinis
-# https://archive.ics.uci.edu/ml/datasets/concrete+compressive+strength
-# (https://www.kaggle.com/datasets/elikplim/concrete-compressive-strength-data-set)
-
 library(tidyverse)
 library(modeldata)
 
@@ -36,7 +32,7 @@ library(survminer)
 
 x <- x %>%
   select(churn,tenure,female,monthly_charges,phone_service,internet_service,senior_citizen,
-         dependents) %>%
+         dependents,partner) %>%
   mutate(internet_service = factor(if_else(internet_service=="No",0,1))) %>%
   mutate(across(-c(monthly_charges,tenure),~as.factor(.)),
          churn = if_else(churn=="No",1,0))
@@ -59,18 +55,23 @@ median(x$tenure)  # I'm underestimating the median survival too
 # (in censored times, the real time is bigger)
 ```
 
-
 ```{r}
-table(x$female)
+plot <- function(column) {
+  ggplot(x,aes({{column}},tenure,color=factor(churn))) + 
+    geom_point(aes(size=factor(churn)), position=position_jitter(width=0.01,height=0.1)) +
+    scale_x_discrete()  + 
+    coord_flip() +
+    theme_minimal() + 
+    scale_size_manual(values=c("1"=2,"0"=4))
+}
 
-table(x$phone_service)
 
-table(x$internet_service)
-
-table(x$senior_citizen)
-
-table(x$internet_service)
+plot(female)
+plot(senior_citizen)
+plot(partner)
+plot(dependents)
 ```
+
 
 
 ```{r}
@@ -78,19 +79,37 @@ km <- survfit(Surv(tenure, churn) ~ 1, data = x)
 
 print(km, print.rmean = TRUE)
 
-summary(km)
-
 ggsurvplot(km)
 ```
 
 
 ```{r}
-model <- survfit(Surv(tenure, churn) ~ senior_citizen , data = x)
+individual <- function(variable,title) {
+  model <- 
+    eval(substitute(survfit(Surv(tenure, churn) ~ variable , data = x)))
+  
+  print(model,print.rmean=TRUE)
+  
+  print(eval(substitute(survdiff(Surv(tenure, churn) ~ variable, data = x, rho = 0))))
+  
+  ggsurvplot(model,
+             conf.int = TRUE,
+             pval = TRUE,
+             fun = "pct",
+             risk.table = TRUE,
+             size = 1,
+             linetype = "strata",
+             palette = c("#E7B800",
+             "#2E9FDF"),
+             legend = "bottom",
+             legend.title = title,)
+}
 
-survdiff(Surv(tenure, churn) ~ senior_citizen, data = x, rho = 0) 
 
-ggsurvplot(model)
-
+individual(female,"Is Female")
+individual(senior_citizen,"Is Senior")
+individual(partner,"Has a partner")
+individual(dependents,"Has dependents")
 ```
 
 
@@ -98,7 +117,7 @@ ggsurvplot(model)
 
 ```{r}
 cox <- coxph(Surv(tenure,churn) ~ phone_service + dependents + internet_service + 
-               senior_citizen + monthly_charges + female, data = x)
+               senior_citizen + monthly_charges + female + partner, data = x)
 
 summary(cox)
 ```
@@ -113,19 +132,37 @@ ggcoxdiagnostics(cox, type = "schoenfeld")
 
 
 ```{r}
+# Kadangi kovariantes, kurios pagal modelio diagnostikas pazeidžia proporcingų
+  # rizikos funkcijų prielaidą pagal tyrimo tikslus yra nepagrindinės (nuisance)
+  # naudojamas sluoksniavimas
 x$monthly_charges_binned = cut_number(x$monthly_charges,3)
 
-cox2 <- coxph(Surv(tenure,churn) ~ phone_service + dependents + strata(internet_service) + 
+cox2 <- coxph(Surv(tenure,churn) ~ phone_service + dependents + female + partner + strata(internet_service) + 
                senior_citizen + strata(monthly_charges_binned), data = x)
 ```
 
 
+
+
 ```{r}
-confint(cox2) %>% cbind(coef(cox2)) %>% as.data.frame() %>% tibble::rownames_to_column() %>% as_tibble() %>% set_names(c("variable","low","high","coef")) %>% 
+exp(confint(cox2)) %>% cbind(exp(coef(cox2))) %>% as.data.frame() %>% tibble::rownames_to_column() %>% as_tibble() %>% set_names(c("variable","low","high","coef")) %>% 
   ggplot(aes(variable,coef)) + 
   geom_pointrange(aes(ymin=low,ymax=high),color="blue") + 
-  coord_flip() + theme_minimal()
+  coord_flip() + theme_minimal() + geom_hline(yintercept = 1, color = "black",linetype="dashed")
 ```
+
+
+```{r}
+cox3 <- coxph(Surv(tenure,churn) ~ phone_service  + partner + strata(internet_service)  + strata(monthly_charges_binned), data = x)
+
+
+summary(cox2)
+```
+
+
+
+
+
 
 
 
