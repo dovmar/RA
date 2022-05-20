@@ -1,0 +1,160 @@
+---
+title: "Išgyvenimumo analizė"
+author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
+output:
+   word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r, message=FALSE}
+# Duomenų šaltinis
+# https://archive.ics.uci.edu/ml/datasets/concrete+compressive+strength
+# (https://www.kaggle.com/datasets/elikplim/concrete-compressive-strength-data-set)
+
+library(tidyverse)
+library(modeldata)
+
+data("wa_churn")
+
+x <- wa_churn
+
+
+set.seed(123)
+x <- x[sample(nrow(x), nrow(x)*0.05), ]
+x <- x %>% filter(tenure > 0)
+```
+
+
+```{r}
+library(survival)
+library(survminer)
+
+
+x <- x %>%
+  select(churn,tenure,female,monthly_charges,phone_service,internet_service,senior_citizen,
+         dependents) %>%
+  mutate(internet_service = factor(if_else(internet_service=="No",0,1))) %>%
+  mutate(across(-c(monthly_charges,tenure),~as.factor(.)),
+         churn = if_else(churn=="No",1,0))
+        
+```
+
+
+
+```{r}
+table(x$churn)
+prop.table(table(x$churn))
+
+
+# median time until default (taking into account just no cendored data)
+median(x$tenure[x$churn==0])  # I'm underestimating
+
+
+# median time until default (with all data)
+median(x$tenure)  # I'm underestimating the median survival too 
+# (in censored times, the real time is bigger)
+```
+
+
+```{r}
+table(x$female)
+
+table(x$phone_service)
+
+table(x$internet_service)
+
+table(x$senior_citizen)
+
+table(x$internet_service)
+```
+
+
+```{r}
+km <- survfit(Surv(tenure, churn) ~ 1, data = x)
+
+print(km, print.rmean = TRUE)
+
+summary(km)
+
+ggsurvplot(km)
+```
+
+
+```{r}
+model <- survfit(Surv(tenure, churn) ~ senior_citizen , data = x)
+
+survdiff(Surv(tenure, churn) ~ senior_citizen, data = x, rho = 0) 
+
+ggsurvplot(model)
+
+```
+
+
+
+
+```{r}
+cox <- coxph(Surv(tenure,churn) ~ phone_service + dependents + internet_service + 
+               senior_citizen + monthly_charges + female, data = x)
+
+summary(cox)
+```
+
+
+```{r}
+cox.zph(cox)
+
+ggcoxdiagnostics(cox, type = "schoenfeld")
+```
+
+
+
+```{r}
+x$monthly_charges_binned = cut_number(x$monthly_charges,3)
+
+cox2 <- coxph(Surv(tenure,churn) ~ phone_service + dependents + strata(internet_service) + 
+               senior_citizen + strata(monthly_charges_binned), data = x)
+```
+
+
+```{r}
+confint(cox2) %>% cbind(coef(cox2)) %>% as.data.frame() %>% tibble::rownames_to_column() %>% as_tibble() %>% set_names(c("variable","low","high","coef")) %>% 
+  ggplot(aes(variable,coef)) + 
+  geom_pointrange(aes(ymin=low,ymax=high),color="blue") + 
+  coord_flip() + theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+library(eha)
+
+aft <- aftreg(Surv(tenure,churn) ~ phone_service + dependents + internet_service + female + 
+               senior_citizen + monthly_charges,
+              data = x)
+```
+
+
+
+
+
+```{r}
+plot(aft)
+```
+
+
+
+
+```{r}
+```
+

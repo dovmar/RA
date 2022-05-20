@@ -1,0 +1,503 @@
+---
+title: "Regresinės analizės projektinis darbas"
+author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
+output:
+   word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+### Cleaning the data
+
+```{r}
+library(tidyverse)
+library(janitor)
+
+
+pop_natural <- read_csv("natural-population-growth.csv") %>%
+  filter(Year == 2017) %>%
+  select(1, 4) %>%
+  set_names(c("country", "natural_growth"))
+
+pop_total <- read_csv("population-growth-rates.csv") %>%
+  filter(Year == 2017) %>%
+  select(1, 4) %>%
+  set_names(c("country", "total_growth"))
+
+
+country_stats <- read_csv("country_profile_variables.csv") %>%
+  clean_names() %>%
+  select(-c(2, 3, 4, 5, 6, 7))
+
+happiness <- read_csv("2017.csv") %>%
+  clean_names() %>%
+  select(-c(2), -starts_with("whisker"), -c("dystopia_residual", "happiness_score", "family"))
+```
+
+
+
+```{r}
+x <- reduce(list(pop_natural, pop_total, country_stats, happiness), left_join, by = "country")
+
+
+
+x <- x %>%
+  select(
+    -starts_with("gdp"),
+    -starts_with("labour"),
+    -starts_with("international"),
+    -starts_with("balance"),
+    -starts_with("population"),
+    -starts_with("fertility")
+  ) %>%
+  select(
+    -starts_with("net"),
+    -starts_with("energy_prod"),
+    -starts_with("forest"),
+    -starts_with("threatened"),
+    -starts_with("seats"),
+    -starts_with("urban_population_growth"),
+    -starts_with("refugees"),
+    -starts_with("infant"),
+    -starts_with("life_expectancy"),
+    -starts_with("co2"),
+    -starts_with("economy"),
+    -health_physicians_per_1000_pop,
+    -contains("41")
+  ) %>%
+  mutate(across(everything(), ~ replace(., . %in% c("...", "-99", ".../..."), "0"))) %>%
+  mutate(across(starts_with("education") | starts_with("pop"), ~ str_split(., "/") %>% map(~ mean(as.numeric(.))))) %>%
+  mutate(
+    energy_supply_per_capita_gigajoules =
+      str_split(energy_supply_per_capita_gigajoules, "/") %>% map(~ `[`(., 1))
+  ) %>%
+  mutate(across(-country, as.numeric)) %>%
+  drop_na()
+
+
+country <- x$country
+```
+
+```{r}
+library(rsample)
+
+set.seed(12345)
+
+train_test_split <- initial_split(x, prop = 0.8)
+train <- training(train_test_split)
+test <- testing(train_test_split)
+
+
+
+country_train <- train$country
+country_test <- test$country
+
+regression <- x %>% select(-c(natural_growth, country))
+
+
+classification <- x %>% mutate(
+  diff = total_growth - natural_growth,
+  category = factor(case_when(
+    diff >= 0 & natural_growth >= 0 ~ 0, # "P migation, P natural",
+    diff >= 0 & natural_growth < 0 ~ 1, # "P migation, N natural",
+    diff < 0 & natural_growth >= 0 ~ 2, # "N migation, P natural",
+    TRUE ~ 3
+  ))
+) %>% # "N migration, N natural"
+  select(-c("diff", "total_growth", "natural_growth", "country"))
+
+
+train_test_split <- initial_split(regression, prop = 0.8)
+regression_train <- training(train_test_split)
+regression_test <- testing(train_test_split)
+
+
+train_test_split <- initial_split(classification, strata = category, prop = 0.65)
+classification_train <- training(train_test_split)
+classification_test <- testing(train_test_split)
+```
+
+
+### Regression models
+
+
+
+```{r}
+library(recipes)
+
+reg_recipe <- recipe(total_growth ~ .,
+  data = regression_train
+) %>%
+  step_corr(all_predictors(), threshold = 0.7) %>%
+  step_nzv(all_predictors())
+
+
+reg_recipe <- prep(reg_recipe, training = regression_train)
+
+regression_train <- bake(reg_recipe, regression_train)
+regression_test <- bake(reg_recipe, regression_test)
+```
+
+
+```{r}
+library(corrplot)
+
+
+correlation_matrix <- regression_train %>%
+  set_names(str_trunc(names(regression_train), 15)) %>%
+  `[`(., , 1:10) %>%
+  cor()
+
+corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black", )
+
+
+
+correlation_matrix <- regression_train %>%
+  set_names(str_trunc(names(regression_train), 15)) %>%
+  `[`(., , c(1, 11:length(regression_train))) %>%
+  cor()
+
+corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black")
+```
+
+
+
+
+```{r}
+regression_train[, c(1:10, length(regression_train))] %>%
+  pivot_longer(-total_growth) %>%
+  ggplot(aes(x = value, y = total_growth)) +
+  facet_wrap(vars(name), scales = "free") +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_minimal()
+
+
+regression_train[, c(1, 11:length(regression_train))] %>%
+  pivot_longer(-total_growth) %>%
+  ggplot(aes(x = value, y = total_growth)) +
+  facet_wrap(vars(name), scales = "free") +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_minimal()
+```
+
+
+```{r}
+model_linear <- lm(total_growth ~ ., data = regression_train)
+```
+
+```{r}
+library(car)
+crPlots(model_linear)
+
+plot(model_linear)
+plot(cooks.distance(model_linear))
+```
+
+
+```{r}
+model_linear <- stats::step(model_linear, direction = "both")
+
+library(effects)
+plot(predictorEffects(model_linear))
+```
+
+
+```{r}
+library(lm.beta) # Standartizuoti koeficientai
+stand_coeffs <- lm.beta(model_linear)
+
+tibble(x = names(stand_coeffs$standardized.coefficients), y = stand_coeffs$standardized.coefficients) %>% ggplot(aes(x, y)) +
+  geom_point(color = "blue") +
+  scale_x_discrete() +
+  coord_flip() +
+  theme_minimal()
+```
+
+
+
+
+```{r}
+library(mgcv)
+library(gratia)
+
+model_gam <- gam(total_growth ~ employment_industry_percent_of_employed +
+  unemployment_percent_of_labour_force +
+  urban_population_percent_of_total_population + s(health_total_expenditure_percent_of_gdp) +
+  s(education_government_expenditure_percent_of_gdp) + education_primary_gross_enrol_ratio_f_m_per_100_pop +
+  education_tertiary_gross_enrol_ratio_f_m_per_100_pop + s(mobile_cellular_subscriptions_per_100_inhabitants_40) +
+  individuals_using_the_internet_per_100_inhabitants + energy_supply_per_capita_gigajoules +
+  pop_using_improved_drinking_water_urban_rural_percent +
+  s(pop_using_improved_sanitation_facilities_urban_rural_percent) +
+  freedom + s(generosity) + s(trust_government_corruption), data = regression_train, select=TRUE)
+
+gam.check(model_gam)
+summary(model_gam)
+draw(model_gam)
+k.check(model_gam)
+```
+
+
+```{r}
+AIC(model_linear)
+AIC(model_gam)
+```
+
+
+
+```{r}
+library(yardstick)
+
+regression_test <- regression_test %>%
+  mutate(
+    predicted_linear = predict(model_linear, regression_test),
+    predicted_gam = predict(model_gam, regression_test)
+  )
+
+set <- metric_set(rmse, mae)
+
+set(regression_test, total_growth, predicted_linear)
+set(regression_test, total_growth, predicted_gam)
+```
+
+
+```{r}
+regression_test %>%
+  pivot_longer(c(predicted_gam, predicted_linear)) %>%
+  mutate(name = factor(name, levels = c("predicted_linear", "predicted_gam"))) %>%
+  ggplot(aes(total_growth, value)) +
+  geom_point(size = 2) +
+  facet_wrap(vars(name)) +
+  geom_abline(color = "red", size = 2.25) +
+  labs(x = "Actual", y = "Predicted") +
+  theme_minimal(base_size = 25)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+Classification model
+
+
+
+```{r}
+class_recipe <- recipe(category ~ .,
+  data = classification_train
+) %>%
+  step_corr(all_predictors(), threshold = 0.7) %>%
+  step_nzv(all_predictors())
+
+
+class_recipe <- prep(class_recipe, training = classification_train)
+
+classification_train <- bake(class_recipe, classification_train)
+classification_test <- bake(class_recipe, classification_test)
+```
+
+
+```{r}
+classification_train[, c(1:10, length(classification_train))] %>%
+  pivot_longer(-category) %>%
+  ggplot(aes(x = category, y = value, fill = category)) +
+  facet_wrap(vars(name), scales = "free") +
+  geom_boxplot() +
+  theme_minimal()
+
+
+classification_train[, c(1, 11:length(classification_train))] %>%
+  pivot_longer(-category) %>%
+  ggplot(aes(x = category, y = value, fill = category)) +
+  facet_wrap(vars(name), scales = "free") +
+  geom_boxplot() +
+  theme_minimal()
+```
+
+```{r}
+library(nnet)
+model_logistic <- nnet::multinom(category ~ ., data = classification_train, trace = FALSE)
+```
+
+
+```{r}
+model_logistic <- stats::step(model_logistic, direction = "both")
+
+plot(predictorEffects(model_linear))
+```
+
+
+```{r}
+df_pred_truth <- tibble(
+  predicted = factor(predict(model_logistic,classification_train)),
+  truth = classification_train$category
+) %>% cbind(as.data.frame(model_logistic$fitted.values))
+
+
+classification_metrics <- metric_set(accuracy, mcc, f_meas)
+
+
+conf_mat(df_pred_truth,
+  truth = truth,
+  estimate = predicted)
+
+classification_metrics(df_pred_truth,
+  truth = truth,
+  estimate = predicted)
+
+roc_auc(df_pred_truth, truth = truth, c("0", "1", "2", "3"), estimator = "macro")
+```
+
+
+```{r}
+roc_curve(df_pred_truth, truth = truth, c("0", "1", "2", "3")) %>%
+  autoplot()
+```
+
+
+
+
+
+```{r}
+library(themis)
+
+class_recipe2 <- recipe(category ~ .,
+  data = classification_train
+) %>%
+  step_corr(all_predictors(), threshold = 0.7) %>%
+  step_nzv(all_predictors()) %>%
+  step_smote(category)
+
+
+class_recipe2 <- prep(class_recipe2, training = classification_train)
+
+classification_train2 <- bake(class_recipe2, NULL)
+```
+
+
+
+
+
+
+```{r}
+model_logistic2 <- nnet::multinom(category ~ ., data = classification_train2, trace = FALSE)
+
+model_logistic2 <- stats::step(model_logistic2, direction = "both")
+
+plot(predictorEffects(model_logistic2))
+```
+
+
+
+
+
+
+
+
+```{r}
+df_pred_truth <- tibble(
+  predicted = factor(predict(model_logistic2,classification_train2)),
+  truth = classification_train2$category
+) %>% cbind(as.data.frame(model_logistic2$fitted.values))
+
+
+classification_metrics <- metric_set(accuracy, mcc, f_meas)
+
+
+conf_mat(df_pred_truth,
+  truth = truth,
+  estimate = predicted)
+
+classification_metrics(df_pred_truth,
+  truth = truth,
+  estimate = predicted)
+
+roc_auc(df_pred_truth, truth = truth, c("0", "1", "2", "3"), estimator = "macro")
+```
+
+
+
+
+
+```{r}
+df_pred_truth <- tibble(
+  predicted_1 =
+    factor(predict(model_logistic, classification_test)),
+  predicted_2 =
+    factor(predict(model_logistic2, classification_test)),
+  truth = classification_test$category
+)
+
+
+classification_metrics <- metric_set(accuracy, mcc, f_meas)
+
+
+conf_mat(df_pred_truth,
+  truth = truth,
+  estimate = predicted_1
+)
+
+conf_mat(df_pred_truth,
+  truth = truth,
+  estimate = predicted_2
+)
+```
+
+
+
+
+
+```{r}
+f <- as.integer(category) - 1 ~ employment_industry_percent_of_employed + s(unemployment_percent_of_labour_force) 
+
+f2 <- ~ employment_industry_percent_of_employed + s(unemployment_percent_of_labour_force)
+```
+
+
+```{r}
+model_gam <- model_gam <- gam(list(f, f2, f2),
+  data = classification_train2,
+  family = mgcv::multinom(K = 3),
+  select = TRUE
+)
+```
+
+```{r}
+df_pred_truth <- tibble(
+  predicted =
+    factor(apply(model_gam$fitted.values, MARGIN = 1, function(x) {
+      which.max(x) - 1
+    }),
+    levels = c(0, 1, 2, 3)
+    ),
+  truth = classification_train$category
+) %>% cbind(set_names(as.data.frame(predict(model_gam, classification_train, type = "response")), c("1", "2", "3", "4")))
+
+
+
+conf_mat(df_pred_truth,
+  truth = truth,
+  estimate = predicted
+)
+```
+
+
+```{r}
+
+plot(model_gam, pages = 1)
+gam.check(model_gam)
+
+
+
+draw(model_gam)
+```
