@@ -2,7 +2,7 @@
 title: "Išgyvenimumo analizė"
 author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
 output:
-   word_document: default
+   html_document: default
 ---
 
 
@@ -14,14 +14,7 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 library(tidyverse)
 library(modeldata)
 
-data("wa_churn")
-
-x <- wa_churn
-
-
-set.seed(123)
-x <- x[sample(nrow(x), nrow(x)*0.05), ]
-x <- x %>% filter(tenure > 0)
+x <- read_csv("wa_churn.csv")
 ```
 
 
@@ -31,38 +24,40 @@ library(survminer)
 
 
 x <- x %>%
-  select(churn,tenure,female,monthly_charges,phone_service,internet_service,senior_citizen,
-         dependents,partner) %>%
-  mutate(internet_service = factor(if_else(internet_service=="No",0,1))) %>%
-  mutate(across(-c(monthly_charges,tenure),~as.factor(.)),
-         churn = if_else(churn=="No",1,0))
-        
+  select(
+    churn, tenure, female, monthly_charges, phone_service, internet_service, senior_citizen,
+    dependents, partner
+  ) %>%
+  mutate(internet_service = factor(if_else(internet_service == "No", 0, 1))) %>%
+  mutate(across(-c(monthly_charges, tenure), ~ as.factor(.)),
+    censured = if_else(churn == "No", 1, 0)
+  ) %>%
+  select(-churn)
 ```
 
 
 
 ```{r}
-table(x$churn)
-prop.table(table(x$churn))
+table(x$censured)
+prop.table(table(x$censured))
 
 
-# median time until default (taking into account just no cendored data)
-median(x$tenure[x$churn==0])  # I'm underestimating
+# vidutinis laikas neįskaitant cenzūravimo
+mean(x$tenure[x$censured == 0])
 
 
-# median time until default (with all data)
-median(x$tenure)  # I'm underestimating the median survival too 
-# (in censored times, the real time is bigger)
+# bendras vidutinis laikas (mažesnis negu yra iš tikrųjų dėl cenzūravimo)
+mean(x$tenure)
 ```
 
 ```{r}
 plot <- function(column) {
-  ggplot(x,aes({{column}},tenure,color=factor(churn))) + 
-    geom_point(aes(size=factor(churn)), position=position_jitter(width=0.01,height=0.1)) +
-    scale_x_discrete()  + 
+  ggplot(x, aes({{ column }}, tenure, color = factor(censured))) +
+    geom_point(aes(size = factor(censured)), position = position_jitter(width = 0.01, height = 0.1)) +
+    scale_x_discrete() +
     coord_flip() +
-    theme_minimal() + 
-    scale_size_manual(values=c("1"=2,"0"=4))
+    theme_minimal() +
+    scale_size_manual(values = c("1" = 2, "0" = 4))
 }
 
 
@@ -70,54 +65,69 @@ plot(female)
 plot(senior_citizen)
 plot(partner)
 plot(dependents)
+
+
+ggplot(x, aes(monthly_charges, tenure, color = factor(censured))) +
+  geom_point() +
+  theme_minimal()
 ```
 
 
 
 ```{r}
-km <- survfit(Surv(tenure, churn) ~ 1, data = x)
+km <- survfit(Surv(tenure, censured) ~ 1, data = x)
 
-print(km, print.rmean = TRUE)
+print(km, print.rmean = TRUE) # 46 mediana, 41 vidurkis (palyginti su prieš tai gautu vidurkiu)
+
 
 ggsurvplot(km)
 ```
 
 
 ```{r}
-individual <- function(variable,title) {
-  model <- 
-    eval(substitute(survfit(Surv(tenure, churn) ~ variable , data = x)))
-  
-  print(model,print.rmean=TRUE)
-  
-  print(eval(substitute(survdiff(Surv(tenure, churn) ~ variable, data = x, rho = 0))))
-  
+individual <- function(variable, title) {
+  model <-
+    eval(substitute(survfit(Surv(tenure, censured) ~ variable, data = x)))
+
+  print(model, print.rmean = TRUE)
+
+  print(eval(substitute(survdiff(Surv(tenure, censured) ~ variable, data = x, rho = 0))))
+
   ggsurvplot(model,
-             conf.int = TRUE,
-             pval = TRUE,
-             fun = "pct",
-             risk.table = TRUE,
-             size = 1,
-             linetype = "strata",
-             palette = c("#E7B800",
-             "#2E9FDF"),
-             legend = "bottom",
-             legend.title = title,)
+    conf.int = TRUE,
+    pval = TRUE,
+    fun = "pct",
+    risk.table = TRUE,
+    size = 1,
+    linetype = "strata",
+    palette = c(
+      "#E7B800",
+      "#2E9FDF"
+    ),
+    legend = "bottom",
+    legend.title = title,
+  )
 }
 
 
-individual(female,"Is Female")
-individual(senior_citizen,"Is Senior")
-individual(partner,"Has a partner")
-individual(dependents,"Has dependents")
+individual(female, "Female")
+individual(senior_citizen, "Senior")
+individual(partner, "Partner")
+individual(dependents, "Dependents")
+
+# Individualiai imant demografinius faktorius statistiškai reikšmingas skirtumas rastas tik
+# su kintamuoju dependents
 ```
 
 
 
 
+
+
 ```{r}
-cox <- coxph(Surv(tenure,churn) ~ phone_service + dependents + internet_service + 
-               senior_citizen + monthly_charges + female + partner, data = x)
+# Cox semiparametrinis modelis
+cox <- coxph(Surv(tenure, censured) ~ phone_service + dependents + internet_service +
+  senior_citizen + monthly_charges + female + partner, data = x)
 
 summary(cox)
 ```
@@ -132,40 +142,69 @@ ggcoxdiagnostics(cox, type = "schoenfeld")
 
 
 ```{r}
-# Kadangi kovariantes, kurios pagal modelio diagnostikas pazeidžia proporcingų
-  # rizikos funkcijų prielaidą pagal tyrimo tikslus yra nepagrindinės (nuisance)
-  # naudojamas sluoksniavimas
-x$monthly_charges_binned = cut_number(x$monthly_charges,3)
+# Kadangi kovariantės, kurios pagal modelio diagnostikas pažeidžia proporcingų
+# rizikos funkcijų prielaidą pagal tyrimo tikslus yra nepagrindinės (nuisance)
+# naudojamas sluoksniavimas
+x$monthly_charges_binned <- cut_number(x$monthly_charges, 3)
 
-cox2 <- coxph(Surv(tenure,churn) ~ phone_service + dependents + female + partner + strata(internet_service) + 
-               senior_citizen + strata(monthly_charges_binned), data = x)
+cox2 <- coxph(Surv(tenure, censured) ~ phone_service + dependents + female + partner +
+  senior_citizen + strata(internet_service) + strata(monthly_charges_binned), data = x)
+```
+
+```{r}
+cox.zph(cox2)
 ```
 
 
 
-
 ```{r}
-exp(confint(cox2)) %>% cbind(exp(coef(cox2))) %>% as.data.frame() %>% tibble::rownames_to_column() %>% as_tibble() %>% set_names(c("variable","low","high","coef")) %>% 
-  ggplot(aes(variable,coef)) + 
-  geom_pointrange(aes(ymin=low,ymax=high),color="blue") + 
-  coord_flip() + theme_minimal() + geom_hline(yintercept = 1, color = "black",linetype="dashed")
-```
-
-
-```{r}
-cox3 <- coxph(Surv(tenure,churn) ~ phone_service  + partner + strata(internet_service)  + strata(monthly_charges_binned), data = x)
-
+# Kovariančių poveikis multiplikatyvus
+# exp(beta_i) lygus rizikos funkcijų santykiui
 
 summary(cox2)
+exp(confint(cox2)) %>%
+  cbind(exp(coef(cox2))) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column() %>%
+  as_tibble() %>%
+  set_names(c("variable", "low", "high", "exp_coef")) %>%
+  ggplot(aes(variable, exp_coef)) +
+  geom_pointrange(aes(ymin = low, ymax = high), color = "blue") +
+  coord_flip() +
+  theme_minimal() +
+  geom_hline(yintercept = 1, color = "black", linetype = "dashed")
 ```
 
 
 
+```{r}
+ggcoxdiagnostics(cox2, type = "dfbeta")
 
+dfbetas <- resid(cox2, "dfbeta")
+colnames(dfbetas) <- c("senior", "phone", "partner", "female", "dependents")
 
+dfbetas <- dfbetas[, -c(2)]
 
+ind_max <- function(column) {
+  max <- sort(column)[1:4]
+  which(column %in% max)
+}
 
+ind <- dfbetas %>%
+  abs() %>%
+  apply(2, ind_max)
 
+x[ind[, "senior"], ]
+
+x[ind[, "partner"], ]
+
+x[ind[, "female"], ]
+
+x[ind[, "dependents"], ]
+
+# išskirtys išsiskiria labai ilgu (ar labai trumpu) paslaugų naudojimosi laiku,
+# tačiau nėra priežasčių jas šalinti iš modelio.
+```
 
 
 
@@ -176,22 +215,63 @@ summary(cox2)
 
 library(eha)
 
-aft <- aftreg(Surv(tenure,churn) ~ phone_service + dependents + internet_service + female + 
-               senior_citizen + monthly_charges,
-              data = x)
+
+aft <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+  senior_citizen + monthly_charges,
+data = x, dist = "weibull", shape = 1
+) # eksponentinis skirstinys
+
+aft2 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+  senior_citizen + monthly_charges,
+data = x, dist = "weibull"
+)
+
+
+aft3 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+  senior_citizen + monthly_charges,
+data = x, dist = "lognormal"
+)
+
+
+aft4 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+  senior_citizen + monthly_charges,
+data = x, dist = "loglogistic"
+)
 ```
-
-
-
 
 
 ```{r}
-plot(aft)
+AIC(aft)
+AIC(aft2)
+AIC(aft3)
+AIC(aft4)
+
+# geriausi rezultatai gaunami su Weibull skirstiniu
 ```
-
-
-
 
 ```{r}
+summary(aft2)
+
+aft2_step <- step(aft2)
+
+summary(aft2_step)
 ```
 
+```{r}
+# exp(beta_i) parodo kiek kartų padidėjo laikas iki įvykio (išgyvenamumo funkcija)
+# exp(beta_i) > 0 -> įvykis įvyksta vėliau
+# exp(beta_i) < 0 -> įvykis įvyksta anksčiau
+
+summary(aft2_step)$coefficients %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  select(rowname, coef, `se(coef)`) %>%
+  mutate(low = exp(coef - `se(coef)`), high = exp(coef + `se(coef)`), coef = exp(coef)) %>%
+  select(-`se(coef)`) %>%
+  set_names(c("variable", "exp_coef", "low", "high")) %>%
+  ggplot(aes(variable, exp_coef)) +
+  geom_pointrange(aes(ymin = low, ymax = high), color = "blue") +
+  coord_flip() +
+  theme_minimal() +
+  geom_hline(yintercept = 1, color = "black", linetype = "dashed")
+```
