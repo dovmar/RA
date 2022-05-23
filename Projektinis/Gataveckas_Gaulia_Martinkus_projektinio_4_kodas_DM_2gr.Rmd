@@ -14,45 +14,45 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ```{r}
 library(tidyverse)
 library(janitor)
+library(countrycode)
 
 
 pop_natural <- read_csv("natural-population-growth.csv") %>%
   filter(Year == 2017) %>%
-  select(1, 4) %>%
-  set_names(c("country", "natural_growth"))
+  dplyr::select(1, 4) %>%
+  set_names(c("country", "natural_growth")) %>%
+  mutate(country = countryname(country))
 
 pop_total <- read_csv("population-growth-rates.csv") %>%
   filter(Year == 2017) %>%
-  select(1, 4) %>%
-  set_names(c("country", "total_growth"))
+  dplyr::select(1, 4) %>%
+  set_names(c("country", "total_growth")) %>%
+mutate(country = countryname(country))
 
 
 country_stats <- read_csv("country_profile_variables.csv") %>%
   clean_names() %>%
-  select(-c(2, 3, 4, 5, 6, 7))
+  dplyr::select(-c(2, 3, 4, 5, 6, 7)) %>%
+  mutate(country = countryname(country))
 
 happiness <- read_csv("2017.csv") %>%
   clean_names() %>%
-  select(-c(2), -starts_with("whisker"), -c("dystopia_residual", "happiness_score", "family"))
+  dplyr::select(-c(2), -starts_with("whisker"), -c("dystopia_residual", "happiness_score", "family")) %>%
+  mutate(country = countryname(country))
 ```
 
 ```{r}
-x <- reduce(list(pop_natural, pop_total, country_stats, happiness), left_join, by = "country")
+x <- reduce(list(pop_natural, pop_total, country_stats, happiness), inner_join, by = "country")
 
-
-
-country <- x$country
 
 x <- x %>%
-  select(
+  dplyr::select(
     -starts_with("gdp"),
     -starts_with("labour"),
     -starts_with("international"),
     -starts_with("balance"),
     -starts_with("population"),
-    -starts_with("fertility")
-  ) %>%
-  select(
+    -starts_with("fertility"),
     -starts_with("net"),
     -starts_with("energy_prod"),
     -starts_with("forest"),
@@ -67,85 +67,92 @@ x <- x %>%
     -starts_with("education_government"),
     -starts_with("energy"),
     -health_physicians_per_1000_pop,
-    -contains("41")
+    -individuals_using_the_internet_per_100_inhabitants,
+    -mobile_cellular_subscriptions_per_100_inhabitants_40,
+    -pop_using_improved_sanitation_facilities_urban_rural_percent
   ) %>%
-  mutate(across(everything(), ~ replace(., . %in% c("...", "-99", ".../..."), "0"))) %>%
-  mutate(across(starts_with("education") | starts_with("pop"), ~ str_split(., "/") %>% map(~ mean(as.numeric(.))))) %>%
+  mutate(across(everything(), ~ replace(., . %in% c("...", "-99", ".../..."), NA))) %>%
+  mutate(across(starts_with("education"), ~ str_split(., "/") %>% map(~ mean(as.numeric(.)))))
+
+
+pop <- x$pop_using_improved_drinking_water_urban_rural_percent
+f1 <-  possibly(~`[[`(.x,1),1)
+x$pop_using_improved_drinking_water_urban <- pop %>% str_split("/") %>% map(f1)
+f2 <-  possibly(~`[[`(.x,2),1)
+x$pop_using_improved_drinking_water_rural <- pop %>% str_split("/") %>% map(f2)
+
+
+x <- x %>%
+  dplyr::select(-pop_using_improved_drinking_water_urban_rural_percent) %>%
   mutate(across(-country, as.numeric)) %>%
   mutate(migration_growth = total_growth - natural_growth) %>%
   drop_na() %>%
-  select(-total_growth, -country)
+  dplyr::select(-total_growth)
 ```
 
 ```{r}
 library(rsample)
 
-set.seed(123456)
+set.seed(123)
 
-train_test_split <- initial_split(tibble(country = country), prop = 0.8)
+x <- x %>% mutate(
+  category = factor(case_when(
+    migration_growth >= 0 & natural_growth >= 0 ~ 0, # "P migation, P natural",
+    migration_growth >= 0 & natural_growth < 0 ~ 1, # "P migation, N natural",
+    migration_growth < 0 & natural_growth >= 0 ~ 2, # "N migation, P natural",
+    TRUE ~ 3 # "N migration, N natural"
+  ))
+) 
+
+
+train_test_split <- initial_split(x,prop = 0.8)
 train <- training(train_test_split)
 test <- testing(train_test_split)
 
 country_train <- train$country
 country_test <- test$country
 
-
-classification <- x %>% mutate(
-  category = factor(case_when(
-    migration_growth >= 0 & natural_growth >= 0 ~ 0, # "P migation, P natural",
-    migration_growth >= 0 & natural_growth < 0 ~ 1, # "P migation, N natural",
-    migration_growth < 0 & natural_growth >= 0 ~ 2, # "N migation, P natural",
-    TRUE ~ 3
-  ))
-) %>% # "N migration, N natural"
-  select(-c("migration_growth", "natural_growth"))
+train <- train %>% dplyr::select(-country)
+```
 
 
-train_test_split <- initial_split(x, prop = 0.8)
-regression_train <- training(train_test_split)
-regression_test <- testing(train_test_split)
+
+```{r}
+library(recipes)
+
+correlated_recipe <- recipe(natural_growth ~ ., data=train) %>%
+  add_role(migration_growth, new_role = "outcome") %>%
+  add_role(category, new_role = "outcome") %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.7) %>%
+  step_nzv(all_numeric_predictors())
 
 
-train_test_split <- initial_split(classification, strata = category, prop = 0.65)
-classification_train <- training(train_test_split)
-classification_test <- testing(train_test_split)
+correlated_recipe <- prep(correlated_recipe, training = train)
+
+train <- bake(correlated_recipe, NULL)
+
 ```
 
 ### Regression models
 
 ```{r}
-library(recipes)
-
-reg_recipe <- recipe(natural_growth ~ .,
-  data = regression_train
-) %>%
-  add_role(migration_growth, new_role = "outcome") %>%
-  step_corr(all_predictors(), threshold = 0.7) %>%
-  step_nzv(all_predictors())
-
-
-reg_recipe <- prep(reg_recipe, training = regression_train)
-
-regression_train <- bake(reg_recipe, regression_train)
-regression_test <- bake(reg_recipe, regression_test)
-```
-
-```{r}
 library(corrplot)
 
 
+regression_train <- train %>% dplyr::select(-category)
+
 correlation <- function(name, name2) {
   correlation_matrix <- regression_train %>%
-    select(1:10, {{ name }}, -{{ name2 }}) %>%
+    dplyr::select(1:5, {{ name }}, {{ name2 }}) %>%
     set_names(., str_trunc(names(.), 15)) %>%
     cor()
 
-  corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black", )
+  corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black")
 
 
 
   correlation_matrix <- regression_train %>%
-    select(11:length(regression_train), {{ name }}, -{{ name2 }}) %>%
+    dplyr::select(6:length(regression_train), {{ name }}, {{ name2 }}) %>%
     set_names(., str_trunc(names(.), 15)) %>%
     cor()
 
@@ -154,41 +161,41 @@ correlation <- function(name, name2) {
 
 
 correlation(migration_growth, natural_growth)
-
-correlation(natural_growth, migration_growth)
 ```
 
 ```{r}
 
-scatterplot <- function(name, name2) {
-  regression_train %>%
-    select(1:10, {{ name }}, -{{ name2 }}) %>%
+scatterplot <- function(name, name2, main) {
+  a<- regression_train %>%
+    dplyr::select(1:5, {{ name }}, -{{ name2 }}) %>%
     pivot_longer(-{{ name }}) %>%
     ggplot(aes(x = value, y = {{ name }})) +
     facet_wrap(vars(name), scales = "free") +
     geom_point() +
     geom_smooth(method = "lm") +
-    theme_minimal()
+    theme_minimal() + labs(title=main)
 
 
-  regression_train %>%
-    select(11:length(regression_train), {{ name }}, -{{ name2 }}) %>%
+  b <- regression_train %>%
+    dplyr::select(6:length(regression_train), {{ name }}, -{{ name2 }}) %>%
     pivot_longer(-{{ name }}) %>%
     ggplot(aes(x = value, y = {{ name }})) +
     facet_wrap(vars(name), scales = "free") +
     geom_point() +
     geom_smooth(method = "lm") +
-    theme_minimal()
+    theme_minimal() + labs(title=main)
+  
+  plot(a)
+  
+  plot(b)
 }
 
 
-scatterplot(migration_growth, natural_growth)
+scatterplot(migration_growth, natural_growth,"Migracijos prieaugis pagal kovariantes")
 
-scatterplot(natural_growth, migration_growth)
+scatterplot(natural_growth, migration_growth,"Natūralus prieaugis pagal kovariantes")
 ```
 
-
-### Regression model
 
 
 ```{r}
@@ -197,16 +204,15 @@ library(effects)
 library(lm.beta)
 
 
-linear_fit <- function(formula, data) {
-  model_linear <- lm(formula, data = data)
+linear_fit <- function(formula) {
+  model_linear <- lm(formula, data=data)
 
   crPlots(model_linear)
   plot(model_linear)
   plot(cooks.distance(model_linear))
+  
 
-  return(model_linear)
-
-  model_linear <- stats::step(model_linear, direction = "both")
+  model_linear <- MASS::stepAIC(model_linear, direction = "both",trace=0)
 
   plot(predictorEffects(model_linear))
   print(summary(model_linear))
@@ -214,35 +220,33 @@ linear_fit <- function(formula, data) {
 
   stand_coeffs <- lm.beta(model_linear)
 
-  tibble(x = names(stand_coeffs$standardized.coefficients), y = stand_coeffs$standardized.coefficients) %>%
+  coeff_plot <- tibble(x = names(stand_coeffs$standardized.coefficients), y = stand_coeffs$standardized.coefficients) %>%
     cbind(confint(stand_coeffs)) %>%
     set_names(c("variable", "coeff", "low", "high")) %>%
     ggplot(aes(variable, coeff)) +
     geom_pointrange(aes(ymin = low, ymax = high), color = "blue") +
     scale_x_discrete() +
     coord_flip() +
-    theme_minimal()
+    theme_minimal() + labs(x="Kovariantė",y="Standartizuotos koeficientų reikšmės")
+  
+  plot(coeff_plot)
 
   model_linear
 }
 ```
 
 ```{r}
-model_linear_migration <- linear_fit(migration_growth ~ employment_industry_percent_of_employed +
-  unemployment_percent_of_labour_force + agricultural_production_index_2004_2006_100 +
-  urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  mobile_cellular_subscriptions_per_100_inhabitants_40 + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent + pop_using_improved_sanitation_facilities_urban_rural_percent +
-  freedom + generosity + trust_government_corruption, regression_train %>% select(-natural_growth))
+print("Tiesinės regresijos modelis migracijos prieaugiui")
+outlier_indices <- which(abs(regression_train$migration_growth) %in% (regression_train$migration_growth %>%
+                                              abs %>% sort(.,decreasing = TRUE) %>% `[`(1:4)))
+data <- regression_train %>% dplyr::select(-natural_growth) %>% slice(-outlier_indices)
+model_linear_migration <- linear_fit(migration_growth ~ .)
+```
 
-model_linear_natural <- linear_fit(natural_growth ~ employment_industry_percent_of_employed +
-  unemployment_percent_of_labour_force + agricultural_production_index_2004_2006_100 +
-  urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  mobile_cellular_subscriptions_per_100_inhabitants_40 + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent + pop_using_improved_sanitation_facilities_urban_rural_percent +
-  freedom + generosity + trust_government_corruption, regression_train %>% select(-migration_growth))
+```{r}
+print("Tiesinės regresijos modelis natūraliam prieaugiui")
+data <- regression_train %>% dplyr::select(-migration_growth)
+model_linear_natural <- linear_fit(natural_growth ~ .)
 ```
 
 
@@ -252,8 +256,8 @@ model_linear_natural <- linear_fit(natural_growth ~ employment_industry_percent_
 ```{r}
 library(quantreg)
 
-fit_quantile <- function(formula, data, quantiles) {
-  model_quantile <- rq(formula, data = regression_train, tau = quantiles)
+quantile_fit <- function() {
+  model_quantile <- rq(formula, data = data, tau = tau)
 
   print(summary(model_quantile, se = "boot"))
   plot(summary(model_quantile))
@@ -266,22 +270,24 @@ fit_quantile <- function(formula, data, quantiles) {
 
 
 ```{r}
-model_linear_migration <- linear_fit(migration_growth ~ employment_industry_percent_of_employed +
-  unemployment_percent_of_labour_force + agricultural_production_index_2004_2006_100 +
-  urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  mobile_cellular_subscriptions_per_100_inhabitants_40 + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent + pop_using_improved_sanitation_facilities_urban_rural_percent +
-  freedom + generosity + trust_government_corruption, regression_train %>% select(-natural_growth))
+print("Kvantilių regresija migracijos prieaugiui")
+
+data <-  regression_train %>% dplyr::select(-natural_growth) %>% slice(-outlier_indices)
+tau <- seq(0.1,0.9,0.1)
+formula <- migration_growth ~ .
+
+model_quantile_migration <- quantile_fit()
+```
 
 
-model_linear_natural <- linear_fit(natural_growth ~ employment_industry_percent_of_employed +
-  unemployment_percent_of_labour_force + agricultural_production_index_2004_2006_100 +
-  urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  mobile_cellular_subscriptions_per_100_inhabitants_40 + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent + pop_using_improved_sanitation_facilities_urban_rural_percent +
-  freedom + generosity + trust_government_corruption, regression_train %>% select(-migration_growth))
+```{r}
+print("Kvantilių regresija natūraliam prieaugiui")
+
+data <-  regression_train %>% dplyr::select(-migration_growth)
+tau <- seq(0.1,0.9,0.1)
+formula <- natural_growth ~ .
+
+model_quantile_migration <- quantile_fit()
 ```
 
 
@@ -293,55 +299,80 @@ library(gratia)
 
 fit_gam <- function(formula, data) {
   model_gam <- gam(formula, data = data, select = TRUE)
-
   gam.check(model_gam)
   summary(model_gam)
   draw(model_gam)
   k.check(model_gam)
-
   model_gam
 }
 ```
 
 
 ```{r}
+print("GAM migracijos prieaugiui")
+data <- regression_train %>% dplyr::select(-natural_growth) %>% slice(-outlier_indices)
+
+# model_gam_migration <- fit_gam(migration_growth ~ employment_industry_percent_of_employed +
+#     s(unemployment_percent_of_labour_force,k=15) + 
+#     s(agricultural_production_index_2004_2006_100,k=15) + 
+#     urban_population_percent_of_total_population +
+#     health_total_expenditure_percent_of_gdp + 
+#     education_primary_gross_enrol_ratio_f_m_per_100_pop + 
+#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop + 
+#     freedom + 
+#     s(generosity,k=15) +
+#     s(trust_government_corruption,k=15), data)
+# 
+# 
+# draw(model_gam_migration)
+# k.check(model_gam_migration)
+# summary(model_gam_migration)
+
+
 model_gam_migration <- fit_gam(migration_growth ~ employment_industry_percent_of_employed +
-  unemployment_percent_of_labour_force + s(agricultural_production_index_2004_2006_100) +
-  urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  s(mobile_cellular_subscriptions_per_100_inhabitants_40) + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent + s(pop_using_improved_sanitation_facilities_urban_rural_percent) +
-  freedom + s(generosity) + s(trust_government_corruption), regression_train %>% select(-natural_growth))
+    s(agricultural_production_index_2004_2006_100,k=15) + 
+    urban_population_percent_of_total_population +
+    health_total_expenditure_percent_of_gdp + 
+    education_primary_gross_enrol_ratio_f_m_per_100_pop + 
+    education_tertiary_gross_enrol_ratio_f_m_per_100_pop + 
+    freedom + 
+    s(generosity,k=15) +
+    s(trust_government_corruption,k=15), data)
+
 
 draw(model_gam_migration)
 k.check(model_gam_migration)
 summary(model_gam_migration)
+```
 
 
-model_gam_migration <- fit_gam(migration_growth ~ employment_industry_percent_of_employed +
-  unemployment_percent_of_labour_force + s(agricultural_production_index_2004_2006_100) +
-  urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  s(mobile_cellular_subscriptions_per_100_inhabitants_40) + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent +
-  freedom + s(trust_government_corruption), regression_train %>% select(-natural_growth))
+```{r}
+print("GAM natūraliam prieaugiui")
+# model_gam_natural <- fit_gam(natural_growth ~ employment_industry_percent_of_employed +
+#     s(unemployment_percent_of_labour_force) + 
+#     agricultural_production_index_2004_2006_100 + 
+#     urban_population_percent_of_total_population +
+#     s(health_total_expenditure_percent_of_gdp) + 
+#     s(education_primary_gross_enrol_ratio_f_m_per_100_pop) + 
+#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop + 
+#     freedom + 
+#     s(generosity) +
+#     s(trust_government_corruption), regression_train %>% dplyr::select(-migration_growth))
+# 
+# 
+# draw(model_gam_natural)
+# k.check(model_gam_natural)
+# summary(model_gam_natural)
 
 
-
-draw(model_gam_migration)
-k.check(model_gam_migration)
-summary(model_gam_migration)
-
-
-model_gam_natural <- fit_gam(natural_growth ~ s(employment_industry_percent_of_employed) +
-  unemployment_percent_of_labour_force + s(agricultural_production_index_2004_2006_100) +
-  urban_population_percent_of_total_population + s(health_total_expenditure_percent_of_gdp) +
-  education_primary_gross_enrol_ratio_f_m_per_100_pop + education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-  s(mobile_cellular_subscriptions_per_100_inhabitants_40) + individuals_using_the_internet_per_100_inhabitants +
-  pop_using_improved_drinking_water_urban_rural_percent + s(pop_using_improved_sanitation_facilities_urban_rural_percent) +
-  freedom + s(generosity) + s(trust_government_corruption), regression_train %>% select(-migration_growth))
-
-
+model_gam_natural <- fit_gam(natural_growth ~ employment_industry_percent_of_employed + 
+    agricultural_production_index_2004_2006_100 + 
+    urban_population_percent_of_total_population +
+    s(health_total_expenditure_percent_of_gdp) + 
+    s(education_primary_gross_enrol_ratio_f_m_per_100_pop) + 
+    education_tertiary_gross_enrol_ratio_f_m_per_100_pop + 
+    freedom + 
+    s(trust_government_corruption), regression_train %>% dplyr::select(-migration_growth))
 
 
 draw(model_gam_natural)
@@ -360,15 +391,17 @@ regression_eval <- function(column, model_linear, model_gam) {
   print(AIC(model_gam))
 
 
-  regression_test <- regression_test %>%
+  regression_test <- test %>%
     mutate(
-      predicted_linear = predict(model_linear, regression_test),
-      predicted_gam = predict(model_gam, regression_test)
+      predicted_linear = predict(model_linear, test),
+      predicted_gam = predict(model_gam, test)
     )
 
   set <- metric_set(rmse, mae)
-
+  
+  print("Tiesinis modelis")
   print(set(regression_test, {{ column }}, predicted_linear))
+  print("GAM modelis")
   print(set(regression_test, {{ column }}, predicted_gam))
 
   regression_test %>%
@@ -378,16 +411,21 @@ regression_eval <- function(column, model_linear, model_gam) {
     geom_point(size = 2) +
     facet_wrap(vars(name)) +
     geom_abline(color = "red", size = 2.25) +
-    labs(x = "Actual", y = "Predicted") +
-    theme_minimal(base_size = 25)
+    labs(x = "Tikros reikšmės", y = "Prognozuotos reikmšės",
+         title = "Prognozuotos ir tikros reikšmės testavimo aibei") +
+    theme_minimal()
 }
 ```
 
 
 ```{r}
+print("Regresija migracijos prieaugiui")
+regression_eval(migration_growth, model_linear_migration, model_gam_migration)
+
+
+print("Regresija natūraliam prieaugiui")
 regression_eval(natural_growth, model_linear_natural, model_gam_natural)
 
-regression_eval(migration_growth, model_linear_migration, model_gam_migration)
 ```
 
 
@@ -400,50 +438,44 @@ regression_eval(migration_growth, model_linear_migration, model_gam_migration)
 
 
 ```{r}
-class_recipe <- recipe(category ~ .,
-  data = classification_train
-) %>%
-  step_corr(all_predictors(), threshold = 0.7) %>%
-  step_nzv(all_predictors())
-
-
-class_recipe <- prep(class_recipe, training = classification_train)
-
-classification_train <- bake(class_recipe, classification_train)
+classification_train <- train %>% dplyr::select(-migration_growth,-natural_growth)
 ```
 
 ```{r}
 classification_train %>%
-  select(1:10, category) %>%
+  dplyr::select(1:6, category) %>%
   pivot_longer(-category) %>%
   ggplot(aes(x = category, y = value, fill = category)) +
   facet_wrap(vars(name), scales = "free") +
   geom_boxplot() +
-  theme_minimal()
+  theme_minimal() + labs(title="Kovariančių reikšmių pasiskirstymas pagal klases")
 
 
 classification_train %>%
-  select(11:length(classification_train), category) %>%
+  dplyr::select(7:length(classification_train), category) %>%
   pivot_longer(-category) %>%
   ggplot(aes(x = category, y = value, fill = category)) +
   facet_wrap(vars(name), scales = "free") +
   geom_boxplot() +
-  theme_minimal()
+  theme_minimal() + labs(title="Kovariančių reikšmių pasiskirstymas pagal klases")
 ```
 
-```{r}
+```{r echo=FALSE, results=FALSE}
 library(nnet)
 model_logistic <- nnet::multinom(category ~ ., data = classification_train, trace = FALSE)
+
+model_logistic <- stats::step(model_logistic, direction = "both", trace=0)
 ```
 
-```{r}
-model_logistic <- stats::step(model_logistic, direction = "both")
+
+```{r fig.width=25, fig.height=18,}
+summary(model_logistic)
 
 plot(predictorEffects(model_logistic))
 ```
 
-```{r}
 
+```{r}
 eval_classification <- function(model, classification_train) {
   df_pred_truth <- tibble(
     predicted = factor(predict(model, classification_train)),
@@ -451,14 +483,15 @@ eval_classification <- function(model, classification_train) {
   ) %>% cbind(as.data.frame(model$fitted.values))
 
 
-  classification_metrics <- metric_set(accuracy, mcc, f_meas)
+  classification_metrics <- metric_set(accuracy, f_meas)
 
-
+  print("Maišos matrica")
   print(conf_mat(df_pred_truth,
     truth = truth,
     estimate = predicted
   ))
 
+  print("Modelio kokybės metrikos")
   print(classification_metrics(df_pred_truth,
     truth = truth,
     estimate = predicted
@@ -477,26 +510,29 @@ eval_classification(model_logistic, classification_train)
 ```{r}
 library(themis)
 
-class_recipe2 <- recipe(category ~ .,
-  data = classification_train
-) %>%
-  step_corr(all_predictors(), threshold = 0.7) %>%
-  step_nzv(all_predictors()) %>%
+smote_recipe <- recipe(category ~ .,
+  data = classification_train) %>%
   step_smote(category)
 
 
-class_recipe2 <- prep(class_recipe2, training = classification_train)
+smote_recipe <- prep(smote_recipe, training = classification_train)
 
-classification_train2 <- bake(class_recipe2, NULL)
+classification_train2 <- bake(smote_recipe, NULL)
 ```
 
-```{r}
+```{r message=FALSE, results=FALSE}
 model_logistic2 <- nnet::multinom(category ~ ., data = classification_train2, trace = FALSE)
 
 model_logistic2 <- stats::step(model_logistic2, direction = "both")
+```
+
+
+```{r fig.width=25, fig.height=18}
+summary(model_logistic2)
 
 plot(predictorEffects(model_logistic2))
 ```
+
 
 ```{r}
 eval_classification(model_logistic2, classification_train2)
@@ -506,13 +542,13 @@ eval_classification(model_logistic2, classification_train2)
 ```{r}
 class_predictions <- function() {
   tibble(
-    migration_growth = predict(model_linear_migration, classification_test),
-    natural_growth = predict(model_linear_natural, classification_test)
+    migration_growth = predict(model_gam_migration, test),
+    natural_growth = predict(model_gam_natural, test)
   ) %>%
     mutate(category = factor(case_when(
-      migration_growth >= 0 & natural_growth >= 0 ~ 0, # "P migation, P natural",
-      migration_growth >= 0 & natural_growth < 0 ~ 1, # "P migation, N natural",
-      migration_growth < 0 & natural_growth >= 0 ~ 2, # "N migation, P natural",
+      migration_growth >= 0 & natural_growth >= 0 ~ 0, # "P migration, P natural",
+      migration_growth >= 0 & natural_growth < 0 ~ 1, # "P migration, N natural",
+      migration_growth < 0 & natural_growth >= 0 ~ 2, # "N migration, P natural",
       TRUE ~ 3
     ))) %>%
     pull(category) %>%
@@ -522,37 +558,37 @@ class_predictions <- function() {
 
 df_pred_truth <- tibble(
   predicted_1 =
-    factor(predict(model_logistic, classification_test)),
+    factor(predict(model_logistic, test),levels=c(0,1,2,3)),
   predicted_2 =
-    factor(predict(model_logistic2, classification_test)),
+    factor(predict(model_logistic2, test),levels=c(0,1,2,3)),
   predicted_3 = class_predictions(),
-  truth = classification_test$category
+  truth = test$category
 )
 
 
-classification_metrics <- metric_set(accuracy, mcc, f_meas)
+classification_metrics <- metric_set(accuracy, f_meas)
 
 
+print("Pradinis modelis")
 conf_mat(df_pred_truth,
   truth = truth,
   estimate = predicted_1
 )
+classification_metrics(df_pred_truth, truth, estimate = predicted_1)
 
+print("SMOTE modelis")
 conf_mat(df_pred_truth,
   truth = truth,
   estimate = predicted_2
 )
+classification_metrics(df_pred_truth, truth, estimate = predicted_2)
 
 
+print("Naudojant du regresijos modelius")
 conf_mat(df_pred_truth,
   truth = truth,
   estimate = predicted_3
 )
-
-
-classification_metrics(df_pred_truth, truth, estimate = predicted_1)
-
-classification_metrics(df_pred_truth, truth, estimate = predicted_2)
 
 classification_metrics(df_pred_truth, truth, estimate = predicted_3)
 ```
