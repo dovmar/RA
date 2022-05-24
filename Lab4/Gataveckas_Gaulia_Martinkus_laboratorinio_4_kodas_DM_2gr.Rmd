@@ -41,11 +41,6 @@ x <- x %>%
 table(x$censured)
 prop.table(table(x$censured))
 
-
-# vidutinis laikas neįskaitant cenzūravimo
-mean(x$tenure[x$censured == 0])
-
-
 # bendras vidutinis laikas (mažesnis negu yra iš tikrųjų dėl cenzūravimo)
 mean(x$tenure)
 ```
