@@ -2,7 +2,7 @@
 title: "Išgyvenimumo analizė"
 author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
 output:
-   html_document: default
+   word_document: default
 ---
 
 
@@ -216,26 +216,26 @@ x[ind[, "dependents"], ]
 library(eha)
 
 
-aft <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+aft <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female + partner +
   senior_citizen + monthly_charges,
-data = x, dist = "weibull", shape = 1
+data = x, dist = "weibull", shape = 1, param="lifeExp"
 ) # eksponentinis skirstinys
 
-aft2 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+aft2 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female + partner +
   senior_citizen + monthly_charges,
-data = x, dist = "weibull"
+data = x, dist = "weibull", param="lifeExp"
 )
 
 
-aft3 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+aft3 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female + partner +
   senior_citizen + monthly_charges,
-data = x, dist = "lognormal"
+data = x, dist = "lognormal", param="lifeExp"
 )
 
 
-aft4 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female +
+aft4 <- aftreg(Surv(tenure, censured) ~ phone_service + dependents + internet_service + female + partner +
   senior_citizen + monthly_charges,
-data = x, dist = "loglogistic"
+data = x, dist = "loglogistic", param="lifeExp"
 )
 ```
 

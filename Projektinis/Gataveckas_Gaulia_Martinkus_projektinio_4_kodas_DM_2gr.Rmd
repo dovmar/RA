@@ -123,7 +123,7 @@ library(recipes)
 correlated_recipe <- recipe(natural_growth ~ ., data=train) %>%
   add_role(migration_growth, new_role = "outcome") %>%
   add_role(category, new_role = "outcome") %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.7) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.85) %>%
   step_nzv(all_numeric_predictors())
 
 
