@@ -2,7 +2,7 @@
 title: "Regresinės analizės projektinis darbas"
 author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
 output:
-   word_document: default
+   html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -576,8 +576,6 @@ anova(model_logistic, model_logistic_small)
 
 ```{r fig.width=25, fig.height=18,}
 summary(model_logistic_small)
-
-plot(predictorEffects(model_logistic_small))
 ```
 
 
@@ -588,14 +586,14 @@ plot_coefficients <- function(model) {
     filter(term != "(Intercept)") %>%
     mutate(greater_than_one = if_else(estimate > 0, "Yes", "No")) %>%
     ggplot(aes(term, exp(estimate), color = y.level, shape = greater_than_one)) +
-    geom_pointrange(aes(ymin = exp(estimate - std.error), ymax = exp(estimate + std.error)), ) +
+    geom_pointrange(aes(ymin = exp(estimate - std.error), ymax = exp(estimate + std.error)), size=1.5) +
     scale_x_discrete() +
     coord_flip() +
-    theme_minimal() +
+    theme_minimal(base_size = 18) +
     geom_hline(yintercept = 1, linetype = "dashed") +
     scale_y_continuous(oob = scales::squish, limits = c(-1, 16)) +
-    facet_grid(cols = vars(y.level), scales = "free") +
-    labs(x = "Kovariantė", y = "Eksponentinės keficientų reikšmės")
+    facet_grid(rows = vars(y.level), scales = "free") +
+    labs(x = "Kovariantė", y = "Eksponentinės koeficientų reikšmės")
 }
 
 plot_coefficients(model_logistic_small)
@@ -691,8 +689,6 @@ anova(model_logistic2, model_logistic2_small)
 
 ```{r fig.width=25, fig.height=18}
 summary(model_logistic2_small)
-
-plot(predictorEffects(model_logistic2_small))
 ```
 
 
