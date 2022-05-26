@@ -1,0 +1,786 @@
+---
+title: "Regresinės analizės projektinis darbas"
+author: "Vainius Gataveckas, Matas Gaulia, Dovydas Martinkus"
+output:
+   word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+
+### Duomenų apdorojimas
+
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(countrycode)
+
+# Natūralaus gyventojų prieaugio duomenys
+pop_natural <- read_csv("natural-population-growth.csv") %>%
+  filter(Year == 2017) %>%
+  dplyr::select(1, 4) %>%
+  set_names(c("country", "natural_growth")) %>%
+  mutate(country = countryname(country))
+
+# Bendras gyventojų prieaugis iš kurio bus gaunamas migracijos prieaugis
+pop_total <- read_csv("population-growth-rates.csv") %>%
+  filter(Year == 2017) %>%
+  dplyr::select(1, 4) %>%
+  set_names(c("country", "total_growth")) %>%
+  mutate(country = countryname(country))
+
+
+# UNData duomenys
+country_stats <- read_csv("country_profile_variables.csv") %>%
+  clean_names() %>%
+  dplyr::select(-c(2, 3, 4, 5, 6, 7)) %>%
+  mutate(country = countryname(country))
+
+
+# World Happiness Report duomenys
+happiness <- read_csv("2017.csv") %>%
+  clean_names() %>%
+  dplyr::select(-c(2), -starts_with("whisker"), -c("dystopia_residual", "happiness_score", "family")) %>%
+  mutate(country = countryname(country))
+```
+
+```{r}
+x <- reduce(list(pop_natural, pop_total, country_stats, happiness), inner_join, by = "country")
+
+
+# Išfiltruojami nenaudinti kintamieji
+x <- x %>%
+  dplyr::select(
+    -starts_with("gdp"),
+    -starts_with("labour"),
+    -starts_with("international"),
+    -starts_with("balance"),
+    -starts_with("population"),
+    -starts_with("fertility"),
+    -starts_with("net"),
+    -starts_with("energy_prod"),
+    -starts_with("forest"),
+    -starts_with("threatened"),
+    -starts_with("seats"),
+    -starts_with("urban_population_growth"),
+    -starts_with("refugees"),
+    -starts_with("infant"),
+    -starts_with("life_expectancy"),
+    -starts_with("co2"),
+    -starts_with("economy"),
+    -starts_with("education_government"),
+    -starts_with("energy"),
+    -health_physicians_per_1000_pop,
+    -individuals_using_the_internet_per_100_inhabitants,
+    -mobile_cellular_subscriptions_per_100_inhabitants_40,
+    -pop_using_improved_sanitation_facilities_urban_rural_percent
+  ) %>%
+  mutate(across(everything(), ~ replace(., . %in% c("...", "-99", ".../..."), NA))) %>%
+  mutate(across(starts_with("education"), ~ str_split(., "/") %>% map(~ mean(as.numeric(.)))))
+
+
+pop <- x$pop_using_improved_drinking_water_urban_rural_percent
+f1 <- possibly(~ `[[`(.x, 1), 1)
+x$pop_using_improved_drinking_water_urban <- pop %>%
+  str_split("/") %>%
+  map(f1)
+f2 <- possibly(~ `[[`(.x, 2), 1)
+x$pop_using_improved_drinking_water_rural <- pop %>%
+  str_split("/") %>%
+  map(f2)
+
+
+x <- x %>%
+  dplyr::select(-pop_using_improved_drinking_water_urban_rural_percent) %>%
+  mutate(across(-country, as.numeric)) %>%
+  mutate(migration_growth = total_growth - natural_growth) %>%
+  drop_na() %>%
+  dplyr::select(-total_growth)
+```
+
+
+```{r}
+library(rsample)
+
+set.seed(123)
+
+# sudaramos kategorijos pagal tai ar migracijos/natūralus prieaugiai yra teigiami ar neigiami
+x <- x %>% mutate(
+  category = factor(case_when(
+    migration_growth >= 0 & natural_growth >= 0 ~ 0, # "P migation, P natural",
+    migration_growth >= 0 & natural_growth < 0 ~ 1, # "P migation, N natural",
+    migration_growth < 0 & natural_growth >= 0 ~ 2, # "N migation, P natural",
+    TRUE ~ 3 # "N migration, N natural"
+  ))
+)
+
+
+# padalijimas į mokymo ir testavimo aibes
+train_test_split <- initial_split(x, prop = 0.8)
+train <- training(train_test_split)
+test <- testing(train_test_split)
+
+country_train <- train$country
+country_test <- test$country
+
+train <- train %>% dplyr::select(-country)
+```
+
+
+
+```{r}
+library(recipes)
+
+# iš anksto panaikinami kintamieji, kurie labai stipriai koreliuoja su kitais
+correlated_recipe <- recipe(natural_growth ~ ., data = train) %>%
+  add_role(migration_growth, new_role = "outcome") %>%
+  add_role(category, new_role = "outcome") %>%
+  step_corr(all_numeric_predictors(), threshold = 0.8) %>%
+  step_nzv(all_numeric_predictors())
+
+
+correlated_recipe <- prep(correlated_recipe, training = train)
+
+train <- bake(correlated_recipe, NULL)
+```
+
+
+
+### Regresijos modeliai
+
+
+
+```{r}
+library(corrplot)
+
+# koreliacijų grafikai
+regression_train <- train %>% dplyr::select(-category)
+
+correlation <- function(name, name2) {
+  correlation_matrix <- regression_train %>%
+    dplyr::select(1:5, {{ name }}, {{ name2 }}) %>%
+    set_names(., str_trunc(names(.), 15)) %>%
+    cor()
+
+  corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black")
+
+
+
+  correlation_matrix <- regression_train %>%
+    dplyr::select(6:length(regression_train), {{ name }}, {{ name2 }}) %>%
+    set_names(., str_trunc(names(.), 15)) %>%
+    cor()
+
+  corrplot(correlation_matrix, order = "original", method = "color", type = "upper", diag = FALSE, tl.col = "black", addCoef.col = "black")
+}
+
+
+correlation(migration_growth, natural_growth)
+```
+
+```{r}
+# sklaidos diagramos su kiekviena kovariante
+scatterplot <- function(name, name2, main, ylab) {
+  a <- regression_train %>%
+    dplyr::select(1:5, {{ name }}, -{{ name2 }}) %>%
+    pivot_longer(-{{ name }}) %>%
+    ggplot(aes(x = value, y = {{ name }})) +
+    facet_wrap(vars(name), scales = "free") +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    theme_minimal() +
+    labs(title = main) + xlab("Kovariantės reikšmė") + ylab(ylab)
+
+
+  b <- regression_train %>%
+    dplyr::select(6:length(regression_train), {{ name }}, -{{ name2 }}) %>%
+    pivot_longer(-{{ name }}) %>%
+    ggplot(aes(x = value, y = {{ name }})) +
+    facet_wrap(vars(name), scales = "free") +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    theme_minimal() +
+    labs(title = main) + xlab("Kovariantės reikšmė") + ylab(ylab)
+
+  plot(a)
+
+  plot(b)
+}
+
+
+scatterplot(migration_growth, natural_growth, "Migracijos prieaugis pagal kovariantes","Migracijos prieaugis")
+
+scatterplot(natural_growth, migration_growth, "Natūralus prieaugis pagal kovariantes","Natūralus prieaugis")
+```
+
+
+```{r}
+library(ggrepel)
+# migracijos ir natūralaus prieaugio sklaidos grafikas
+ggplot(regression_train, aes(natural_growth, migration_growth)) +
+  geom_point() +
+  theme_minimal() +
+  xlab("Natūralus prieaugis") +
+  ylab("Migracijos prieaugis") + labs(main="Migracijos ir natūralus prieaugis") +
+  geom_text_repel(data=(regression_train %>% cbind(country_train))[abs(regression_train$migration_growth)>2,]
+                  ,aes(label=country_train))
+
+
+# matomos dvi labai stiprios išskirtys
+outlier_indices <- regression_train$migration_growth %>%
+  abs() %>%
+  order(decreasing = TRUE) %>%
+  `[`(1:2)
+```
+
+
+```{r}
+library(car)
+library(effects)
+library(lm.beta)
+library(broom)
+
+
+# sudaromas paprastos regresijos modelis, atliekama pažingsninė regresija
+linear_fit <- function(formula) {
+  model_linear <- lm(formula, data = data)
+
+  # diagnostiniai grafikai
+  crPlots(model_linear)
+  plot(model_linear)
+  plot(cooks.distance(model_linear))
+
+  # pažingsninė regresija
+  model_linear_small <- MASS::stepAIC(model_linear, direction = "both", trace = 0)
+
+  # ar yra statistiškai reikšmingas skirtumas
+  print(anova(model_linear, model_linear_small))
+
+  # kovariančių efektų grafikas
+  plot(predictorEffects(model_linear_small))
+  print(summary(model_linear_small))
+
+
+  stand <- lm.beta(model_linear_small)
+  # standartizuotų koeficientų grafikas
+  coeff_plot <- tidy(stand) %>%
+    filter(term != "(Intercept)") %>%
+    ggplot(aes(term, estimate)) +
+    geom_pointrange(aes(ymin = estimate - std.error, ymax = estimate + std.error), color = "blue") +
+    scale_x_discrete() +
+    coord_flip() +
+    theme_minimal() +
+    labs(x = "Kovariantė", y = "Standartizuotos koeficientų reikšmės")
+
+  plot(coeff_plot)
+
+  model_linear_small
+}
+```
+
+```{r}
+# Atskirai apmokomi modeliai migracijos ir natūraliam prieaugiui
+print("Tiesinės regresijos modelis migracijos prieaugiui")
+data <- regression_train %>%
+  dplyr::select(-natural_growth) %>%
+  slice(-outlier_indices)
+model_linear_migration <- linear_fit(migration_growth ~ .)
+```
+
+```{r}
+print("Tiesinės regresijos modelis natūraliam prieaugiui")
+data <- regression_train %>% dplyr::select(-migration_growth)
+model_linear_natural <- linear_fit(natural_growth ~ .)
+# Matoma, kad migracijos prieaugiui tiesiniu modeliu gaunami daug prastesni rezultatai negu
+  # natūraliam prieaugiui
+```
+
+
+
+
+
+```{r}
+# Kvantilių regresija
+library(quantreg)
+
+quantile_fit <- function() {
+  model_quantile <- rq(formula, data = data, tau = tau)
+
+  print(summary(model_quantile, se = "boot"))
+  plot(summary(model_quantile))
+  print(anova(model_quantile, test = "Wald", joint = FALSE))
+
+  model_quantile
+}
+```
+
+
+
+```{r}
+print("Kvantilių regresija migracijos prieaugiui")
+
+data <- regression_train %>%
+  dplyr::select(-natural_growth) %>%
+  slice(-outlier_indices)
+tau <- seq(0.1, 0.9, 0.1)
+formula <- migration_growth ~ .
+
+model_quantile_migration <- quantile_fit()
+```
+
+
+```{r}
+print("Kvantilių regresija natūraliam prieaugiui")
+
+data <- regression_train %>% dplyr::select(-migration_growth)
+tau <- seq(0.1, 0.9, 0.1)
+formula <- natural_growth ~ .
+
+model_quantile_migration <- quantile_fit()
+```
+
+
+
+
+```{r}
+library(mgcv)
+library(gratia)
+
+# siekiant tiksliau prognozuoti reikšmes naudinga sudaryti apibendrintus adityvius modelius,
+# kuriais galima įtraukti netiesinius sąryšius tarp kovariančių ir atsako
+fit_gam <- function(formula, data) {
+  model_gam <- gam(formula, data = data, select = FALSE)
+  gam.check(model_gam)
+  summary(model_gam)
+  draw(model_gam)
+  k.check(model_gam)
+  model_gam
+}
+```
+
+
+```{r}
+print("GAM migracijos prieaugiui")
+
+data <- regression_train %>%
+  dplyr::select(-natural_growth) %>%
+  slice(-outlier_indices)
+
+# model_gam_migration <- fit_gam(migration_growth ~ s(employment_industry_percent_of_employed) +
+#     s(unemployment_percent_of_labour_force) +
+#     s(agricultural_production_index_2004_2006_100) +
+#     s(urban_population_percent_of_total_population) +
+#     s(health_total_expenditure_percent_of_gdp) +
+#     s(education_primary_gross_enrol_ratio_f_m_per_100_pop) +
+#     s(education_tertiary_gross_enrol_ratio_f_m_per_100_pop) +
+#     s(freedom) +
+#     s(generosity) +
+#     s(trust_government_corruption), data)
+#
+#
+# draw(model_gam_migration)
+# k.check(model_gam_migration)
+# summary(model_gam_migration)
+
+
+
+model_gam_migration <- fit_gam(migration_growth ~ s(employment_industry_percent_of_employed) +
+  unemployment_percent_of_labour_force +
+  agricultural_production_index_2004_2006_100 +
+  s(urban_population_percent_of_total_population) +
+  health_total_expenditure_percent_of_gdp +
+  education_primary_gross_enrol_ratio_f_m_per_100_pop +
+  s(education_tertiary_gross_enrol_ratio_f_m_per_100_pop) +
+  s(freedom) +
+  s(generosity) +
+  s(trust_government_corruption), data)
+
+
+draw(model_gam_migration)
+k.check(model_gam_migration)
+summary(model_gam_migration)
+```
+
+
+```{r}
+print("GAM natūraliam prieaugiui")
+# model_gam_natural <- fit_gam(natural_growth ~ s(employment_industry_percent_of_employed) +
+#     s(unemployment_percent_of_labour_force) +
+#     s(agricultural_production_index_2004_2006_100) +
+#     s(urban_population_percent_of_total_population) +
+#     s(health_total_expenditure_percent_of_gdp) +
+#     s(education_primary_gross_enrol_ratio_f_m_per_100_pop) +
+#     s(education_tertiary_gross_enrol_ratio_f_m_per_100_pop) +
+#     s(freedom) +
+#     s(generosity) +
+#     s(trust_government_corruption), regression_train %>% dplyr::select(-migration_growth))
+#
+#
+# draw(model_gam_natural)
+# k.check(model_gam_natural)
+# summary(model_gam_natural)
+
+
+model_gam_natural <- fit_gam(natural_growth ~ s(employment_industry_percent_of_employed) +
+  unemployment_percent_of_labour_force +
+  s(agricultural_production_index_2004_2006_100) +
+  urban_population_percent_of_total_population +
+  health_total_expenditure_percent_of_gdp +
+  s(education_primary_gross_enrol_ratio_f_m_per_100_pop) +
+  s(education_tertiary_gross_enrol_ratio_f_m_per_100_pop) +
+  s(freedom) +
+  s(generosity) +
+  trust_government_corruption, regression_train %>% dplyr::select(-migration_growth))
+
+draw(model_gam_natural)
+k.check(model_gam_natural)
+summary(model_gam_natural)
+```
+
+
+
+```{r}
+library(yardstick)
+
+# regresijos modelių įvertinimas
+regression_test <- function(column, model_linear, model_gam, data, title) {
+  print(AIC(model_linear))
+  print(AIC(model_gam))
+
+
+  regression_test <- data %>%
+    mutate(
+      predicted_linear = predict(model_linear, data),
+      predicted_gam = predict(model_gam, data)
+    )
+
+  set <- metric_set(rmse, mae)
+
+  print("Tiesinis modelis")
+  print(set(regression_test, {{ column }}, predicted_linear))
+  print("GAM modelis")
+  print(set(regression_test, {{ column }}, predicted_gam))
+
+  regression_test %>%
+    pivot_longer(c(predicted_gam, predicted_linear)) %>%
+    mutate(name = factor(name, levels = c("predicted_linear", "predicted_gam"))) %>%
+    ggplot(aes({{ column }}, value)) +
+    geom_point(size = 2) +
+    facet_wrap(vars(name)) +
+    geom_abline(color = "red", size = 2.25) +
+    labs(
+      x = "Tikros reikšmės", y = "Prognozuotos reikmšės",
+      title = title
+    ) +
+    theme_minimal()
+}
+```
+
+
+```{r}
+# GAM modeliu gaunami nežymiai geresni rezultatai su mokymo duomeninis
+# , tačiau naudojant testavimo aibe pagerėjimo negaunama
+# Apskritai abu modeliai netinkami prognozuoti migracijos prieaugį
+print("Regresija migracijos prieaugiui")
+AIC(model_linear_migration)
+AIC(model_gam_migration)
+regression_test(
+  migration_growth, model_linear_migration, model_gam_migration, regression_train,
+  "Prognozuotos ir tikros reikšmės mokymo aibei (migracijos prieaugis)"
+)
+
+
+regression_test(
+  migration_growth, model_linear_migration, model_gam_migration, test,
+  "Prognozuotos ir tikros reikšmės testavimo aibei (migracijos prieaugis)"
+)
+
+
+
+
+# Prognozuojant natūralų prieaugi gaunami geresni rezultatai negu prognozuojant migracijos prieaugį
+# mokymo aibėje matomas stiprus GAM modeliu gautas rezultatų pagerėjimas, tačiau testavimo aibėje skirtumai
+  # tik minimalūs
+print("Regresija natūraliam prieaugiui")
+AIC(model_linear_natural)
+AIC(model_gam_natural)
+regression_test(
+  natural_growth, model_linear_natural, model_gam_natural, regression_train,
+  "Prognozuotos ir tikros reikšmės  mokymo aibei (natūralus prieaugis)"
+)
+
+
+regression_test(
+  natural_growth, model_linear_natural, model_gam_natural, test,
+  "Prognozuotos ir tikros reikšmės testavimo aibei (natūralus prieaugis)"
+)
+```
+
+
+
+
+
+
+
+### Multinominė logistinė regresija
+
+
+```{r}
+classification_train <- train %>% dplyr::select(-migration_growth, -natural_growth)
+```
+
+```{r}
+# Kadangi gautos prastos migracijos prieaugio prognozės, vietoje tikslios 
+  # prieaugio reikšmės prognozuojama tik ar tam tikro tipo gyventojų prieaugis teigiamas
+  # ar neigiamas (naudojamos prieš tai sudarytos klasės)
+
+# Stačiakampės diagramos pagal kiekvieną kovariantę
+classification_train %>%
+  dplyr::select(1:6, category) %>%
+  pivot_longer(-category) %>%
+  ggplot(aes(x = category, y = value, fill = category)) +
+  facet_wrap(vars(name), scales = "free") +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Kovariančių reikšmių pasiskirstymas pagal klases") + 
+  xlab("Kateogrija") + ylab("Kovariantės reikšmė")
+
+
+classification_train %>%
+  dplyr::select(7:length(classification_train), category) %>%
+  pivot_longer(-category) %>%
+  ggplot(aes(x = category, y = value, fill = category)) +
+  facet_wrap(vars(name), scales = "free") +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Kovariančių reikšmių pasiskirstymas pagal klases") +
+  xlab("Kateogrija") + ylab("Kovariantės reikšmė")
+```
+
+```{r echo=FALSE, results=FALSE}
+library(nnet)
+# Multinominės logistinės regresijos modelis
+model_logistic <- nnet::multinom(category ~ ., data = classification_train, trace = FALSE)
+
+model_logistic_small <- stats::step(model_logistic, direction = "both", trace = 0)
+```
+
+
+```{r}
+# Pažingsnine regresija sumažintas modelis statistiškai reikšmingai nesiskiria 
+anova(model_logistic, model_logistic_small)
+```
+
+```{r fig.width=25, fig.height=18,}
+summary(model_logistic_small)
+
+plot(predictorEffects(model_logistic_small))
+```
+
+
+```{r}
+# multinominės logistinės regresijos modelio koeficientų grafikas
+plot_coefficients <- function(model) {
+  tidy(model) %>%
+    filter(term != "(Intercept)") %>%
+    mutate(greater_than_one = if_else(estimate > 0, "Yes", "No")) %>%
+    ggplot(aes(term, exp(estimate), color = y.level, shape = greater_than_one)) +
+    geom_pointrange(aes(ymin = exp(estimate - std.error), ymax = exp(estimate + std.error)), ) +
+    scale_x_discrete() +
+    coord_flip() +
+    theme_minimal() +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    scale_y_continuous(oob = scales::squish, limits = c(-1, 16)) +
+    facet_grid(cols = vars(y.level), scales = "free") +
+    labs(x = "Kovariantė", y = "Eksponentinės keficientų reikšmės")
+}
+
+plot_coefficients(model_logistic_small)
+```
+
+
+```{r}
+# pačių sudaryta modelio kokybės metrika, kuri "pataiso" bendrą tikslumą
+# priskirdama 0.5 - jeigu teisingai prognozuotas vieno tipo prieaugis
+# 1 - jeigu teisingi abu prieaugiai
+# 0 - jeigu abiejų tipų prieaugiai neteisingi
+
+custom_metric <- function(y_true, y_pred) {
+  c(
+    "custom_metric", "multiclass",
+    case_when(
+      y_true %in% c(0, 3) & y_pred %in% c(1, 2) ~ 0.5,
+      y_true %in% c(1, 2) & y_pred %in% c(0, 3) ~ 0.5,
+      y_true == y_pred ~ 1,
+      TRUE ~ 0
+    ) %>%
+      mean()
+  )
+}
+
+# Multinominės logistinės regresijos modelio įvertinimas
+classification_eval <- function(model, data) {
+  df_pred_truth <- tibble(
+    predicted = factor(predict(model, data)),
+    truth = data$category
+  ) %>%
+    cbind(as.data.frame(model$fitted.values))
+
+
+
+  classification_metrics <- metric_set(accuracy, j_index, f_meas)
+
+  print("Maišos matrica")
+  print(conf_mat(df_pred_truth,
+    truth = truth,
+    estimate = predicted
+  ))
+
+  print("Modelio kokybės metrikos")
+  print(classification_metrics(df_pred_truth,
+    truth = truth,
+    estimate = predicted
+  ) %>%
+    rbind(custom_metric(df_pred_truth$truth, df_pred_truth$predicted)))
+
+
+
+  print(roc_auc(df_pred_truth, truth = truth, c("0", "1", "2", "3"), estimator = "macro"))
+
+  roc_curve(df_pred_truth, truth = truth, c("0", "1", "2", "3")) %>%
+    autoplot()
+}
+
+print("Pradinis multinominės logistinės regresijos modelis")
+classification_eval(model_logistic_small, classification_train)
+```
+
+
+```{r}
+# Turimas ne itin ryškus klasių išbalasavimas
+# (daugumos klasės stebėjimų beveik 6 kartus daugiau nei mažiausios) 
+# Todėl rezultatai gali pagerėti sugeneravus dirbtinius papildomus stebėjimus
+classification_train %>% count(category)
+
+library(themis)
+
+smote_recipe <- recipe(category ~ .,
+  data = classification_train
+) %>%
+  step_smote(category, over_ratio = 1)
+
+
+smote_recipe <- prep(smote_recipe, training = classification_train)
+
+classification_train2 <- bake(smote_recipe, NULL)
+```
+
+```{r message=FALSE, results=FALSE}
+model_logistic2 <- nnet::multinom(category ~ ., data = classification_train2, trace = FALSE)
+
+model_logistic2_small <- stats::step(model_logistic2, direction = "both")
+```
+
+```{r}
+anova(model_logistic2, model_logistic2_small)
+```
+
+
+```{r fig.width=25, fig.height=18}
+summary(model_logistic2_small)
+
+plot(predictorEffects(model_logistic2_small))
+```
+
+
+```{r}
+plot_coefficients(model_logistic2_small)
+```
+
+
+```{r}
+print("Multinominės logistinės regresijos modelis su SMOTE")
+classification_eval(model_logistic2_small, classification_train2)
+```
+
+
+
+```{r}
+# apskaičiuoja kiek kartų teisingai prognozuotas kiekvieno tipo prieaugis
+# (lengviau interpretuoti negu maišos matricą)
+custom_confusion <- function(y_true, y_pred) {
+  case_when(
+    y_true == y_pred ~ "Correct both",
+    (y_true %in% c(0, 2) & y_pred %in% c(0, 2)) | (y_true %in% c(1, 3) & y_pred %in% c(1, 3)) ~ "Correct natural",
+    (y_true %in% c(0, 1) & y_pred %in% c(0, 1)) | (y_true %in% c(2, 3) & y_pred %in% c(2, 3)) ~ "Correct migration",
+    TRUE ~ "Correct none"
+  ) %>%
+    tibble(results = .) %>%
+    count(results)
+}
+
+
+# palyginimui jeigu butų naudojami prieš tai sudaryti 2 regresijos modeliai prognozuoti klases
+class_predictions <- function() {
+  tibble(
+    migration_growth = predict(model_gam_migration, test),
+    natural_growth = predict(model_gam_natural, test)
+  ) %>%
+    mutate(category = factor(case_when(
+      migration_growth >= 0 & natural_growth >= 0 ~ 0, # "P migration, P natural",
+      migration_growth >= 0 & natural_growth < 0 ~ 1, # "P migration, N natural",
+      migration_growth < 0 & natural_growth >= 0 ~ 2, # "N migration, P natural",
+      TRUE ~ 3
+    ))) %>%
+    pull(category)
+}
+
+
+classification_test <- function(model, data, name) {
+  df_pred_truth <- tibble(truth = data$category)
+  classification_metrics <- metric_set(accuracy, j_index, f_meas)
+
+  if (name == "Naudojant du regresijos modelius") {
+    df_pred_truth$predicted <- factor(class_predictions(), levels = c(0, 1, 2, 3))
+  } else {
+    df_pred_truth$predicted <- factor(predict(model, test), levels = c(0, 1, 2, 3))
+  }
+
+
+  print("Maišos matrica")
+  conf_mat(df_pred_truth,
+    truth = truth,
+    estimate = predicted
+  ) %>% print()
+
+
+  print(custom_confusion(df_pred_truth$truth, df_pred_truth$predicted))
+
+  print("Modelio kokybės metrikos")
+  classification_metrics(df_pred_truth, truth, estimate = predicted) %>%
+    rbind(custom_metric(df_pred_truth$truth, df_pred_truth$predicted)) %>%
+    print()
+
+  cat("\n\n")
+}
+```
+
+
+```{r}
+# Naudojant testavimo aibę.
+# Geriausi rezultatai gauti su modeliu, kuriam naudotas SMOTE algoritmas
+# blogiausi - panaudojus regresijos modelius
+
+# Vėl matoma, kad geresni rezultatai gaunami prognozuojant natūralų gyventojų prieaugį
+print("Naudojant pradinį multinominės logistinės regresijos modelį")
+classification_test(model_logistic, test, "Pradinis")
+
+print("Naudojant multinomės logistinės regresijos modelį su SMOTE")
+classification_test(model_logistic2_small, test, "SMOTE")
+
+classification_test(model_logistic, test, "Naudojant du regresijos modelius")
+```
+u
