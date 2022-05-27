@@ -192,7 +192,9 @@ scatterplot <- function(name, name2, main, ylab) {
     geom_point() +
     geom_smooth(method = "lm") +
     theme_minimal() +
-    labs(title = main) + xlab("Kovariantės reikšmė") + ylab(ylab)
+    labs(title = main) +
+    xlab("Kovariantės reikšmė") +
+    ylab(ylab)
 
 
   b <- regression_train %>%
@@ -203,7 +205,9 @@ scatterplot <- function(name, name2, main, ylab) {
     geom_point() +
     geom_smooth(method = "lm") +
     theme_minimal() +
-    labs(title = main) + xlab("Kovariantės reikšmė") + ylab(ylab)
+    labs(title = main) +
+    xlab("Kovariantės reikšmė") +
+    ylab(ylab)
 
   plot(a)
 
@@ -211,9 +215,9 @@ scatterplot <- function(name, name2, main, ylab) {
 }
 
 
-scatterplot(migration_growth, natural_growth, "Migracijos prieaugis pagal kovariantes","Migracijos prieaugis")
+scatterplot(migration_growth, natural_growth, "Migracijos prieaugis pagal kovariantes", "Migracijos prieaugis")
 
-scatterplot(natural_growth, migration_growth, "Natūralus prieaugis pagal kovariantes","Natūralus prieaugis")
+scatterplot(natural_growth, migration_growth, "Natūralus prieaugis pagal kovariantes", "Natūralus prieaugis")
 ```
 
 
@@ -224,9 +228,12 @@ ggplot(regression_train, aes(natural_growth, migration_growth)) +
   geom_point() +
   theme_minimal() +
   xlab("Natūralus prieaugis") +
-  ylab("Migracijos prieaugis") + labs(main="Migracijos ir natūralus prieaugis") +
-  geom_text_repel(data=(regression_train %>% cbind(country_train))[abs(regression_train$migration_growth)>2,]
-                  ,aes(label=country_train))
+  ylab("Migracijos prieaugis") +
+  labs(main = "Migracijos ir natūralus prieaugis") +
+  geom_text_repel(
+    data = (regression_train %>% cbind(country_train))[abs(regression_train$migration_growth) > 2, ],
+    aes(label = country_train)
+  )
 
 
 # matomos dvi labai stiprios išskirtys
@@ -295,7 +302,7 @@ print("Tiesinės regresijos modelis natūraliam prieaugiui")
 data <- regression_train %>% dplyr::select(-migration_growth)
 model_linear_natural <- linear_fit(natural_growth ~ .)
 # Matoma, kad migracijos prieaugiui tiesiniu modeliu gaunami daug prastesni rezultatai negu
-  # natūraliam prieaugiui
+# natūraliam prieaugiui
 ```
 
 
@@ -503,7 +510,7 @@ regression_test(
 
 # Prognozuojant natūralų prieaugi gaunami geresni rezultatai negu prognozuojant migracijos prieaugį
 # mokymo aibėje matomas stiprus GAM modeliu gautas rezultatų pagerėjimas, tačiau testavimo aibėje skirtumai
-  # tik minimalūs
+# tik minimalūs
 print("Regresija natūraliam prieaugiui")
 AIC(model_linear_natural)
 AIC(model_gam_natural)
@@ -533,9 +540,9 @@ classification_train <- train %>% dplyr::select(-migration_growth, -natural_grow
 ```
 
 ```{r}
-# Kadangi gautos prastos migracijos prieaugio prognozės, vietoje tikslios 
-  # prieaugio reikšmės prognozuojama tik ar tam tikro tipo gyventojų prieaugis teigiamas
-  # ar neigiamas (naudojamos prieš tai sudarytos klasės)
+# Kadangi gautos prastos migracijos prieaugio prognozės, vietoje tikslios
+# prieaugio reikšmės prognozuojama tik ar tam tikro tipo gyventojų prieaugis teigiamas
+# ar neigiamas (naudojamos prieš tai sudarytos klasės)
 
 # Stačiakampės diagramos pagal kiekvieną kovariantę
 classification_train %>%
@@ -545,8 +552,9 @@ classification_train %>%
   facet_wrap(vars(name), scales = "free") +
   geom_boxplot() +
   theme_minimal() +
-  labs(title = "Kovariančių reikšmių pasiskirstymas pagal klases") + 
-  xlab("Kateogrija") + ylab("Kovariantės reikšmė")
+  labs(title = "Kovariančių reikšmių pasiskirstymas pagal klases") +
+  xlab("Kateogrija") +
+  ylab("Kovariantės reikšmė")
 
 
 classification_train %>%
@@ -557,7 +565,8 @@ classification_train %>%
   geom_boxplot() +
   theme_minimal() +
   labs(title = "Kovariančių reikšmių pasiskirstymas pagal klases") +
-  xlab("Kateogrija") + ylab("Kovariantės reikšmė")
+  xlab("Kateogrija") +
+  ylab("Kovariantės reikšmė")
 ```
 
 ```{r echo=FALSE, results=FALSE}
@@ -570,8 +579,25 @@ model_logistic_small <- stats::step(model_logistic, direction = "both", trace = 
 
 
 ```{r}
-# Pažingsnine regresija sumažintas modelis statistiškai reikšmingai nesiskiria 
+# Pažingsnine regresija sumažintas modelis statistiškai reikšmingai nesiskiria
 anova(model_logistic, model_logistic_small)
+```
+
+
+```{r}
+# candidate_1 <- nnet::multinom(formula = category ~ urban_population_percent_of_total_population +
+#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop + generosty + 
+#     pop_using_improved_drinking_water_urban,
+#     data = classification_train, trace = FALSE)
+
+candidate_2 <- nnet::multinom(
+  formula = category ~ urban_population_percent_of_total_population +
+    education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
+    trust_government_corruption + pop_using_improved_drinking_water_urban,
+  data = classification_train, trace = FALSE
+)
+
+model_logistic_small <- candidate_2
 ```
 
 ```{r fig.width=25, fig.height=18,}
@@ -586,12 +612,12 @@ plot_coefficients <- function(model) {
     filter(term != "(Intercept)") %>%
     mutate(greater_than_one = if_else(estimate > 0, "Yes", "No")) %>%
     ggplot(aes(term, exp(estimate), color = y.level, shape = greater_than_one)) +
-    geom_pointrange(aes(ymin = exp(estimate - std.error), ymax = exp(estimate + std.error)), size=1.5) +
+    geom_pointrange(aes(ymin = exp(estimate - std.error), ymax = exp(estimate + std.error)), size = 1.5) +
     scale_x_discrete() +
     coord_flip() +
     theme_minimal(base_size = 18) +
     geom_hline(yintercept = 1, linetype = "dashed") +
-    scale_y_continuous(oob = scales::squish, limits = c(-1, 16)) +
+    scale_y_continuous(oob = scales::squish, limits = c(-0.5, 5)) +
     facet_grid(rows = vars(y.level), scales = "free") +
     labs(x = "Kovariantė", y = "Eksponentinės koeficientų reikšmės")
 }
@@ -659,7 +685,7 @@ classification_eval(model_logistic_small, classification_train)
 
 ```{r}
 # Turimas ne itin ryškus klasių išbalasavimas
-# (daugumos klasės stebėjimų beveik 6 kartus daugiau nei mažiausios) 
+# (daugumos klasės stebėjimų beveik 6 kartus daugiau nei mažiausios)
 # Todėl rezultatai gali pagerėti sugeneravus dirbtinius papildomus stebėjimus
 classification_train %>% count(category)
 
@@ -684,6 +710,36 @@ model_logistic2_small <- stats::step(model_logistic2, direction = "both")
 
 ```{r}
 anova(model_logistic2, model_logistic2_small)
+
+candidate_1 <- nnet::multinom(
+  formula = category ~ employment_industry_percent_of_employed +
+    urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
+    education_primary_gross_enrol_ratio_f_m_per_100_pop +
+    education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
+    generosity + pop_using_improved_drinking_water_urban,
+  data = classification_train2, trace = FALSE
+)
+
+# candidate_2 <- nnet::multinom(
+#   formula = category ~ employment_industry_percent_of_employed +
+#     urban_population_percent_of_total_population +
+#     education_primary_gross_enrol_ratio_f_m_per_100_pop +
+#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
+#     generosity + trust_government_corruption + pop_using_improved_drinking_water_urban,
+#   data = classification_train2, trace = FALSE
+# )
+# 
+# candidate_3 <- nnet::multinom(
+#   formula = category ~ employment_industry_percent_of_employed +
+#     urban_population_percent_of_total_population +
+#     education_primary_gross_enrol_ratio_f_m_per_100_pop +
+#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
+#     freedom + generosity + pop_using_improved_drinking_water_urban,
+#   data = classification_train2, trace = FALSE
+# )
+
+  
+model_logistic2_small <- candidate_1
 ```
 
 
@@ -779,4 +835,4 @@ classification_test(model_logistic2_small, test, "SMOTE")
 
 classification_test(model_logistic, test, "Naudojant du regresijos modelius")
 ```
-u
+
