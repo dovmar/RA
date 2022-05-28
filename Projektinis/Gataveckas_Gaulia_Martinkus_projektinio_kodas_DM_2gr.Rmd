@@ -346,7 +346,7 @@ data <- regression_train %>% dplyr::select(-migration_growth)
 tau <- seq(0.1, 0.9, 0.1)
 formula <- natural_growth ~ .
 
-model_quantile_migration <- quantile_fit()
+model_quantile_natural <- quantile_fit()
 ```
 
 
@@ -453,15 +453,13 @@ summary(model_gam_natural)
 library(yardstick)
 
 # regresijos modelių įvertinimas
-regression_test <- function(column, model_linear, model_gam, data, title) {
-  print(AIC(model_linear))
-  print(AIC(model_gam))
-
+regression_test <- function(column, model_linear, model_gam, model_quantile, data, title) {
 
   regression_test <- data %>%
     mutate(
       predicted_linear = predict(model_linear, data),
-      predicted_gam = predict(model_gam, data)
+      predicted_gam = predict(model_gam, data),
+      predicted_quantile = predict(model_quantile,data)[,5]
     )
 
   set <- metric_set(rmse, mae)
@@ -470,10 +468,12 @@ regression_test <- function(column, model_linear, model_gam, data, title) {
   print(set(regression_test, {{ column }}, predicted_linear))
   print("GAM modelis")
   print(set(regression_test, {{ column }}, predicted_gam))
+  print("Kvantilių regresijos modelis")
+  print(set(regression_test, {{ column }}, predicted_quantile))
 
   regression_test %>%
-    pivot_longer(c(predicted_gam, predicted_linear)) %>%
-    mutate(name = factor(name, levels = c("predicted_linear", "predicted_gam"))) %>%
+    pivot_longer(c(predicted_gam, predicted_linear,predicted_quantile)) %>%
+    mutate(name = factor(name, levels = c("predicted_linear", "predicted_gam","predicted_quantile"))) %>%
     ggplot(aes({{ column }}, value)) +
     geom_point(size = 2) +
     facet_wrap(vars(name)) +
@@ -494,34 +494,40 @@ regression_test <- function(column, model_linear, model_gam, data, title) {
 print("Regresija migracijos prieaugiui")
 AIC(model_linear_migration)
 AIC(model_gam_migration)
+
+resid(model_quantile_migration) %>% abs() %>% apply(2,sum)
+
 regression_test(
-  migration_growth, model_linear_migration, model_gam_migration, regression_train,
+  migration_growth, model_linear_migration, model_gam_migration, model_quantile_migration, regression_train,
   "Prognozuotos ir tikros reikšmės mokymo aibei (migracijos prieaugis)"
 )
 
 
 regression_test(
-  migration_growth, model_linear_migration, model_gam_migration, test,
+  migration_growth, model_linear_migration, model_gam_migration, model_quantile_migration, test,
   "Prognozuotos ir tikros reikšmės testavimo aibei (migracijos prieaugis)"
 )
+```
 
 
-
-
+```{r}
 # Prognozuojant natūralų prieaugi gaunami geresni rezultatai negu prognozuojant migracijos prieaugį
 # mokymo aibėje matomas stiprus GAM modeliu gautas rezultatų pagerėjimas, tačiau testavimo aibėje skirtumai
 # tik minimalūs
 print("Regresija natūraliam prieaugiui")
 AIC(model_linear_natural)
 AIC(model_gam_natural)
+
+resid(model_quantile_natural) %>% abs() %>% apply(2,sum)
+
 regression_test(
-  natural_growth, model_linear_natural, model_gam_natural, regression_train,
-  "Prognozuotos ir tikros reikšmės  mokymo aibei (natūralus prieaugis)"
+  natural_growth, model_linear_natural, model_gam_natural, model_quantile_natural, regression_train,
+  "Prognozuotos ir tikros reikšmės mokymo aibei (natūralus prieaugis)"
 )
 
 
 regression_test(
-  natural_growth, model_linear_natural, model_gam_natural, test,
+  natural_growth, model_linear_natural, model_gam_natural, model_quantile_natural, test,
   "Prognozuotos ir tikros reikšmės testavimo aibei (natūralus prieaugis)"
 )
 ```
@@ -584,21 +590,7 @@ anova(model_logistic, model_logistic_small)
 ```
 
 
-```{r}
-# candidate_1 <- nnet::multinom(formula = category ~ urban_population_percent_of_total_population +
-#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop + generosty + 
-#     pop_using_improved_drinking_water_urban,
-#     data = classification_train, trace = FALSE)
 
-candidate_2 <- nnet::multinom(
-  formula = category ~ urban_population_percent_of_total_population +
-    education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-    trust_government_corruption + pop_using_improved_drinking_water_urban,
-  data = classification_train, trace = FALSE
-)
-
-model_logistic_small <- candidate_2
-```
 
 ```{r fig.width=25, fig.height=18,}
 summary(model_logistic_small)
@@ -710,36 +702,6 @@ model_logistic2_small <- stats::step(model_logistic2, direction = "both")
 
 ```{r}
 anova(model_logistic2, model_logistic2_small)
-
-candidate_1 <- nnet::multinom(
-  formula = category ~ employment_industry_percent_of_employed +
-    urban_population_percent_of_total_population + health_total_expenditure_percent_of_gdp +
-    education_primary_gross_enrol_ratio_f_m_per_100_pop +
-    education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-    generosity + pop_using_improved_drinking_water_urban,
-  data = classification_train2, trace = FALSE
-)
-
-# candidate_2 <- nnet::multinom(
-#   formula = category ~ employment_industry_percent_of_employed +
-#     urban_population_percent_of_total_population +
-#     education_primary_gross_enrol_ratio_f_m_per_100_pop +
-#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-#     generosity + trust_government_corruption + pop_using_improved_drinking_water_urban,
-#   data = classification_train2, trace = FALSE
-# )
-# 
-# candidate_3 <- nnet::multinom(
-#   formula = category ~ employment_industry_percent_of_employed +
-#     urban_population_percent_of_total_population +
-#     education_primary_gross_enrol_ratio_f_m_per_100_pop +
-#     education_tertiary_gross_enrol_ratio_f_m_per_100_pop +
-#     freedom + generosity + pop_using_improved_drinking_water_urban,
-#   data = classification_train2, trace = FALSE
-# )
-
-  
-model_logistic2_small <- candidate_1
 ```
 
 
@@ -835,4 +797,6 @@ classification_test(model_logistic2_small, test, "SMOTE")
 
 classification_test(model_logistic, test, "Naudojant du regresijos modelius")
 ```
+
+
 
