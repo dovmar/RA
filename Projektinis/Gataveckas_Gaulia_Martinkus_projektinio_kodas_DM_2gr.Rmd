@@ -247,7 +247,6 @@ outlier_indices <- regression_train$migration_growth %>%
 ```{r}
 library(car)
 library(effects)
-library(lm.beta)
 library(broom)
 
 
@@ -269,20 +268,6 @@ linear_fit <- function(formula) {
   # kovariančių efektų grafikas
   plot(predictorEffects(model_linear_small))
   print(summary(model_linear_small))
-
-
-  stand <- lm.beta(model_linear_small)
-  # standartizuotų koeficientų grafikas
-  coeff_plot <- tidy(stand) %>%
-    filter(term != "(Intercept)") %>%
-    ggplot(aes(term, estimate)) +
-    geom_pointrange(aes(ymin = estimate - std.error, ymax = estimate + std.error), color = "blue") +
-    scale_x_discrete() +
-    coord_flip() +
-    theme_minimal() +
-    labs(x = "Kovariantė", y = "Standartizuotos koeficientų reikšmės")
-
-  plot(coeff_plot)
 
   model_linear_small
 }
