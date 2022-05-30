@@ -632,7 +632,7 @@ classification_eval <- function(model, data) {
 
 
 
-  classification_metrics <- metric_set(accuracy, j_index, f_meas)
+  classification_metrics <- metric_set(accuracy, f_meas)
 
   print("Maišos matrica")
   print(conf_mat(df_pred_truth,
@@ -740,7 +740,7 @@ class_predictions <- function() {
 
 classification_test <- function(model, data, name) {
   df_pred_truth <- tibble(truth = data$category)
-  classification_metrics <- metric_set(accuracy, j_index, f_meas)
+  classification_metrics <- metric_set(accuracy, f_meas)
 
   if (name == "Naudojant du regresijos modelius") {
     df_pred_truth$predicted <- factor(class_predictions(), levels = c(0, 1, 2, 3))
